@@ -1,7 +1,8 @@
 // ============================================================================
-// APUS.IO — MAIN GAME ORCHESTRATOR, GHOST REALM LIFECYCLE & LOBBY INTEGRATION
+// APUS.IO — MAIN GAME ORCHESTRATOR, SUNNY CLAYMORPHISM & LOBBY INTEGRATION
 // ============================================================================
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
@@ -37,8 +38,10 @@ class ApusGame {
 
   _initRendererAndScene() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x031326);
-    this.scene.fog = new THREE.FogExp2(0x041b33, 0.0022);
+
+    // Warm Sunny Sky Background & Golden Horizon Fog (NO Black Space!)
+    this.scene.background = new THREE.Color('#87CEEB');
+    this.scene.fog = new THREE.FogExp2('#a8e6ff', 0.0025);
 
     this.camera = new THREE.PerspectiveCamera(
       CONFIG.CAMERA_FOV,
@@ -56,18 +59,23 @@ class ApusGame {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.toneMappingExposure = 1.25;
+
+    // Studio Environment Lighting (RoomEnvironment) for rich clay specular reflections
+    const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
 
     this.container.appendChild(this.renderer.domElement);
 
+    // Post-Processing (EffectComposer + UnrealBloomPass)
     this.composer = new EffectComposer(this.renderer);
     const renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(renderPass);
 
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.32,
-      0.55,
+      0.35,
+      0.65,
       0.78
     );
     this.composer.addPass(this.bloomPass);
@@ -79,10 +87,10 @@ class ApusGame {
     // 1. Spherical Geodesic Grid & Flood-Fill Engine
     this.territoryGrid = new TerritoryGrid(this.scene, sunDir);
 
-    // 2. Spherical Ocean World, Crepuscular Sunbeams & Procedural Static Obstacles
+    // 2. Spherical Ocean World, Crepuscular Sunbeams & Smooth Clay Islands
     this.sphereWorld = new SphereWorld(this.scene, this.territoryGrid);
 
-    // 3. Local Player Controller (DerpyOctopusAvatar)
+    // 3. Local Player Controller (1.8x DerpyOctopusAvatar)
     this.player = new PlayerController(
       this.scene,
       this.territoryGrid,
@@ -115,7 +123,7 @@ class ApusGame {
       this.territoryGrid
     );
 
-    // 6. Real-Time Nickname Leaderboard, Ghost Realm Banner & Nameplates HUD
+    // 6. Real-Time Nickname Leaderboard, Emergency Reset/Unstuck [R], Ghost Realm Banner & Nameplates HUD
     this.hud = new HUD(
       this.player,
       this.territoryGrid,
@@ -123,6 +131,7 @@ class ApusGame {
       this.hazardsAndBonuses,
       {
         onRespawnRequest: () => this.respawnPlayer(),
+        onResetUnstuckRequest: () => this.resetUnstuckPlayer(),
         onOpenCustomizeRequest: () => this.lobby.open(),
         onResetMatchRequest: () => this.resetMatch()
       }
@@ -132,6 +141,9 @@ class ApusGame {
     this.roomManager = new RoomManager({
       onRoomJoined: ({ roomKey }) => {
         this.hud.setRoomKey(roomKey);
+      },
+      onRoomSettingsUpdate: (matchSettings) => {
+        this._applyMatchSettings(matchSettings, false);
       },
       onPeerStateUpdate: (peerId, payload) => {
         this._syncRemotePeerIntoSlot(peerId, payload);
@@ -143,12 +155,37 @@ class ApusGame {
       }
     });
 
-    // 8. Pre-Game Lobby with Live 3D Derpy Octopus Preview & 4-Part Customizer
+    // 8. Pre-Game Lobby with Live 3D Derpy Octopus Preview, Match Settings & 4-Part Customizer
     this.lobby = new PreGameLobby({
-      onLaunchMatch: ({ loadout, roomConfig }) => {
-        this._applyLobbyLaunch(loadout, roomConfig);
+      onLaunchMatch: ({ loadout, roomConfig, matchSettings }) => {
+        this._applyLobbyLaunch(loadout, roomConfig, matchSettings);
       }
     });
+  }
+
+  /**
+   * Applies Match & Hazard Settings (`gameSpeed`, `difficulty`, `sharkCount`, `sharkSpeed`).
+   */
+  _applyMatchSettings(matchSettings = {}, showNotification = false) {
+    if (!matchSettings) return;
+    if (matchSettings.gameSpeed !== undefined) {
+      CONFIG.GAME_SPEED_MULTIPLIER = THREE.MathUtils.clamp(Number(matchSettings.gameSpeed) || 1.0, 0.5, 2.0);
+    }
+    if (matchSettings.difficulty && CONFIG.DIFFICULTY_PRESETS[matchSettings.difficulty]) {
+      CONFIG.DIFFICULTY = matchSettings.difficulty;
+    }
+    const sharkCount = matchSettings.sharkCount !== undefined ? Number(matchSettings.sharkCount) : CONFIG.SHARK_COUNT;
+    const sharkSpeed = matchSettings.sharkSpeed !== undefined ? Number(matchSettings.sharkSpeed) : CONFIG.SHARK_SPEED_MULTIPLIER;
+
+    this.hazardsAndBonuses.syncSharkSettings(sharkCount, sharkSpeed);
+
+    if (showNotification) {
+      const diffObj = CONFIG.DIFFICULTY_PRESETS[CONFIG.DIFFICULTY] || CONFIG.DIFFICULTY_PRESETS.normal;
+      this.hud.showToast(
+        `⚙️ ${CONFIG.GAME_SPEED_MULTIPLIER.toFixed(1)}x Speed • ${diffObj.label} • 🦈 ${CONFIG.SHARK_COUNT} Sharks`,
+        '#70f3ff'
+      );
+    }
   }
 
   /**
@@ -193,9 +230,10 @@ class ApusGame {
   /**
    * Called when the player clicks "Dive Into Ocean Arena!" inside the Pre-Game Lobby.
    */
-  _applyLobbyLaunch(loadout, roomConfig) {
+  _applyLobbyLaunch(loadout, roomConfig, matchSettings) {
+    this._applyMatchSettings(matchSettings, true);
     this.player.applyLoadout(loadout, true);
-    this.roomManager.joinRoom(roomConfig);
+    this.roomManager.joinRoom({ ...roomConfig, matchSettings });
 
     // Configure whether AI bots fill empty room slots (FILL_WITH_BOTS = true/false)
     if (roomConfig.fillWithBots) {
@@ -205,7 +243,6 @@ class ApusGame {
         b.wakePoints.visible = true;
       }
     } else {
-      // Private room with FILL_WITH_BOTS = false: clear AI bot territories and hide bots
       for (const b of this.bots) {
         this.territoryGrid.clearContenderTerritory(b.id);
         b.clearTrail();
@@ -225,8 +262,30 @@ class ApusGame {
     );
   }
 
+  /**
+   * Finds a random safe ocean coordinate far away from static obstacles, other contenders, AND patrolling sharks.
+   */
+  findSafeOceanCoordinateAwayFromHazards(minObstacleMargin = 16.5, minSharkMargin = 22.0) {
+    const r = CONFIG.SPHERE_RADIUS;
+    for (let attempt = 0; attempt < 90; attempt++) {
+      const candidate = this.sphereWorld.findSafeSpawnNormal(this.allContenders, minObstacleMargin, 24.0);
+      let sharkClear = true;
+      if (this.hazardsAndBonuses && this.hazardsAndBonuses.sharks) {
+        for (let s = 0; s < this.hazardsAndBonuses.sharks.length; s++) {
+          const shark = this.hazardsAndBonuses.sharks[s];
+          if (candidate.angleTo(shark.normal) * r < minSharkMargin) {
+            sharkClear = false;
+            break;
+          }
+        }
+      }
+      if (sharkClear) return candidate;
+    }
+    return this.sphereWorld.findSafeSpawnNormal(this.allContenders, 14.0, 18.0);
+  }
+
   _spawnAllContenders(keepOneBotHaunting = false) {
-    const playerStartNormal = new THREE.Vector3(0, 0.15, 0.988).normalize();
+    const playerStartNormal = this.findSafeOceanCoordinateAwayFromHazards(16.0, 20.0);
     this.player.spawn(playerStartNormal);
 
     for (let i = 0; i < this.activeBots.length; i++) {
@@ -234,8 +293,6 @@ class ApusGame {
       const safeNormal = this.sphereWorld.findSafeSpawnNormal(this.allContenders, 15.0, 26.0);
       bot.spawn(safeNormal);
 
-      // Have 1 bot start in the Ghost Realm near the front hemisphere so if the player
-      // gets eliminated early, there is already a fellow Ghost Octopus haunting nearby!
       if (keepOneBotHaunting && i === this.activeBots.length - 1) {
         this.territoryGrid.clearContenderTerritory(bot.id);
         bot.normal.set(0.18, 0.22, 0.95).normalize();
@@ -248,10 +305,27 @@ class ApusGame {
 
   respawnPlayer() {
     this.territoryGrid.clearContenderTerritory(this.player.id);
-    const safeNormal = this.sphereWorld.findSafeSpawnNormal(this.allContenders, 16.0, 25.0);
+    const safeNormal = this.findSafeOceanCoordinateAwayFromHazards(16.5, 24.0);
     this.player.spawn(safeNormal);
     this.hud.hideGhostBanner();
-    this.hud.showToast('⚡ Respawned into the living ocean!', this.player.colorHex);
+    this.hud.showToast('⚡ Respawned into the sunny ocean!', this.player.colorHex);
+    this.hud.playSound('powerup');
+  }
+
+  /**
+   * Emergency "🔄 Reset / Unstuck [R]" action:
+   * Immediately resets the player's current run, clears their old territory/trail,
+   * and respawns them fresh at a brand-new random safe ocean coordinate (far away from
+   * obstacles and sharks) with a full new starter territory island!
+   */
+  resetUnstuckPlayer() {
+    this.player.clearTrail();
+    this.territoryGrid.clearContenderTerritory(this.player.id);
+    const safeNormal = this.findSafeOceanCoordinateAwayFromHazards(17.5, 26.0);
+    this.player.spawn(safeNormal);
+    this.hazardsAndBonuses.spawnShockwaveRing(this.player.normal, this.player.color.getHex(), 14.0, 0.65);
+    this.hud.hideGhostBanner();
+    this.hud.showToast('🔄 Reset / Unstuck! Fresh starter island created!', this.player.colorHex);
     this.hud.playSound('powerup');
   }
 
@@ -282,11 +356,8 @@ class ApusGame {
 
   /**
    * THE "GHOST REALM" ELIMINATION LIFECYCLE:
-   * Losing players are NEVER abruptly kicked out of the arena!
-   * 1. Clears their owned territory and active trail.
-   * 2. Plays a comical "Splat / Poof!" cartoon ink & ectoplasm burst.
-   * 3. Immediately transitions the contender into a Ghost Octopus (`state = 'GHOST'`)
-   *    at their exact elimination coordinates.
+   * Triggered ONLY when an opponent contender severs an active trail (or self-collision if enabled).
+   * Never triggered by obstacles or shark bites!
    */
   eliminateContender(victim, killer = null, reason = 'Active trail severed!') {
     if (victim.state === 'GHOST') return;
@@ -313,20 +384,12 @@ class ApusGame {
       this.hud.playSound('eliminated');
       this.hud.showGhostBanner(reason);
       this.hud.showToast('👻 Splat! You are now a Ghost Octopus! Fellow Ghosts are revealed!', '#70f3ff');
-
-      // Ensure at least one AI Ghost companion is nearby in the Ghost Realm so the player can see & emote with them!
       this._ensureGhostCompanionNearPlayer();
     } else {
-      // Bot stays in the Ghost Realm haunting the sphere for 8.5 seconds before respawning
       victim.respawnDelayTimer = 8.5;
     }
   }
 
-  /**
-   * Ensures that when the local player enters the Ghost Realm, if no other contender is currently
-   * a Ghost, one bot briefly visits the Ghost Realm nearby so the player can immediately see
-   * another `👻 [Nickname]` Ghost Octopus floating around!
-   */
   _ensureGhostCompanionNearPlayer() {
     if (this.activeBots.length === 0) return;
     const anyBotGhost = this.activeBots.some(b => b.state === 'GHOST');
@@ -372,7 +435,7 @@ class ApusGame {
         if (victim.state === 'GHOST' || !victim.isOutside || victim.spawnImmunityTimer > 0) continue;
 
         const pts = victim.trailPoints;
-        const hitRadius = CONFIG.TRAIL_HIT_RADIUS + (victim.getCurrentTrailWidth() - CONFIG.NORMAL_TRAIL_WIDTH) * 0.3;
+        const hitRadius = CONFIG.TRAIL_HIT_RADIUS + (victim.getCurrentTrailWidth() - CONFIG.NORMAL_TRAIL_WIDTH) * 0.25;
 
         let cut = false;
         for (let p = 0; p < pts.length; p++) {
@@ -382,7 +445,7 @@ class ApusGame {
           }
         }
 
-        if (!cut && attacker.position.distanceTo(victim.position) < 2.2) {
+        if (!cut && attacker.position.distanceTo(victim.position) < 2.5) {
           cut = true;
         }
 
@@ -419,8 +482,7 @@ class ApusGame {
     this.player.update(
       dt,
       this.elapsedTime,
-      (c, cells) => this._handleLoopClosed(c, cells),
-      (victim, killer, reason) => this.eliminateContender(victim, killer, reason)
+      (c, cells) => this._handleLoopClosed(c, cells)
     );
     this.player.updateCamera(dt);
 
@@ -430,7 +492,6 @@ class ApusGame {
 
       if (bot.state === 'GHOST' && !bot.isRemotePeer) {
         bot.respawnDelayTimer -= dt;
-        // If local player is in Ghost mode, keep at least 1 bot in Ghost mode so they have company
         const ghostBotsCount = this.activeBots.filter(b => b.state === 'GHOST').length;
         const holdAsCompanion = this.player.state === 'GHOST' && ghostBotsCount <= 1;
 
@@ -447,15 +508,21 @@ class ApusGame {
       bot.update(
         dt,
         this.elapsedTime,
-        (c, cells) => this._handleLoopClosed(c, cells),
-        (victim, killer, reason) => this.eliminateContender(victim, killer, reason)
+        (c, cells) => this._handleLoopClosed(c, cells)
       );
     }
 
     // 3. Enforce Strict Asymmetric Visibility Rule (Living vs. Ghost Realm)
     const localPlayerIsGhost = this.player.state === 'GHOST';
     for (let i = 0; i < this.allContenders.length; i++) {
-      this.allContenders[i].syncVisibilityWithLocalPlayer(localPlayerIsGhost);
+      const c = this.allContenders[i];
+      c.syncVisibilityWithLocalPlayer(localPlayerIsGhost);
+
+      // TERRITORY INTEGRITY FALLBACK (Anti-Softlock Guard):
+      // Every tick for every ALIVE contender, if ownedCells.size === 0, stamp a fresh starter island!
+      if (c.state === 'ALIVE' && c.ownedCells.size === 0) {
+        this.territoryGrid.ensureContenderHasBase(c);
+      }
     }
 
     // 4. Check Trail Severing & Eliminations among Living contenders
@@ -471,7 +538,7 @@ class ApusGame {
       },
       onSharkBite: (contender) => {
         if (contender.isPlayer) {
-          this.hud.showToast('🦈 Shark Snapped Your Trail! Stunned 0.8s', '#ff4d6d');
+          this.hud.showToast('🦈 Shark Snapped Active Trail! Snapped Back to Base (Territory Safe!)', '#ff4d6d');
           this.hud.playSound('shark');
         }
       },
@@ -485,9 +552,6 @@ class ApusGame {
       },
       onLoopClosed: (contender, cells, fromPos, toPos) => {
         this._handleLoopClosed(contender, cells, fromPos, toPos);
-      },
-      onEliminated: (victim, killer, reason) => {
-        this.eliminateContender(victim, killer, reason);
       }
     });
 

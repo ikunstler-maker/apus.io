@@ -4,11 +4,13 @@
 import * as THREE from 'three';
 import { CONFIG } from './Config.js';
 import { DerpyOctopusAvatar } from './DerpyOctopusAvatar.js';
+import { createTrailRibbonMaterial } from './Shaders.js';
 
 /**
  * Base class for both the Local Player and AI Bot / Remote Contenders.
- * Handles spherical geodesic movement, procedural 3D DerpyOctopusAvatar,
- * glowing active trail ribbon, Ghost Realm gliding physics, and power-ups.
+ * Handles spherical geodesic movement, procedural 1.8x 3D DerpyOctopusAvatar,
+ * wide glowing active trail ribbon, strict ownedCells vs activeTrailCells separation,
+ * non-lethal tangential obstacle sliding, Ghost Realm gliding physics, and power-ups.
  */
 export class Contender {
   /**
@@ -37,6 +39,10 @@ export class Contender {
     this.patternId = CONFIG.PATTERNS[id % CONFIG.PATTERNS.length].id;
     this.borderEffectId = CONFIG.BORDER_EFFECTS[id % CONFIG.BORDER_EFFECTS.length].id;
 
+    // Strict State Separation: ownedCells Set vs activeTrailCells Set
+    this.ownedCells = this.territoryGrid.getOwnedCellsSet(this.id);
+    this.activeTrailCells = this.territoryGrid.getActiveTrailCellsSet(this.id);
+
     // Register initial style in TerritoryGrid
     this.territoryGrid.setContenderStyle(
       this.id,
@@ -57,6 +63,7 @@ export class Contender {
     this.state = 'ALIVE';
     this.isEliminated = false; // True when state === 'GHOST'
     this.isOutside = false;
+    this.isDrawingTrail = false;
     this.spawnImmunityTimer = 0;
     this.stunTimer = 0;
     this.booEmoteTimer = 0;
@@ -100,7 +107,9 @@ export class Contender {
         : '#' + new THREE.Color(baseColor).getHexString();
       this.color.set(this.colorHex);
       this.avatar.setColor(this.colorHex);
-      this.trailMaterial.color.copy(this.color);
+      if (this.trailMaterial.uniforms && this.trailMaterial.uniforms.uColor) {
+        this.trailMaterial.uniforms.uColor.value.copy(this.color);
+      }
     }
     if (figurineId) {
       this.figurineId = figurineId;
@@ -123,7 +132,7 @@ export class Contender {
   }
 
   /**
-   * Builds the procedural 3D `DerpyOctopusAvatar` + status aura shield ring.
+   * Builds the procedural 1.8x 3D `DerpyOctopusAvatar` + status aura shield ring.
    */
   _buildOctopusMesh() {
     this.mesh = new THREE.Group();
@@ -135,8 +144,8 @@ export class Contender {
     });
     this.mesh.add(this.avatar.root);
 
-    // Spawn immunity / status aura ring around octopus tentacles
-    const shieldGeo = new THREE.RingGeometry(2.05, 2.55, 32);
+    // Spawn immunity / status aura ring scaled for 1.8x octopus tentacles
+    const shieldGeo = new THREE.RingGeometry(3.2, 3.85, 36);
     shieldGeo.rotateX(-Math.PI / 2);
     this.shieldMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -147,14 +156,14 @@ export class Contender {
       depthWrite: false
     });
     this.shieldRing = new THREE.Mesh(shieldGeo, this.shieldMat);
-    this.shieldRing.position.y = 0.4;
+    this.shieldRing.position.y = 0.45;
     this.mesh.add(this.shieldRing);
 
     this.scene.add(this.mesh);
   }
 
   /**
-   * Builds a dynamic ribbon BufferGeometry for the contender's active tether trail.
+   * Builds a dynamic 3.5x wider ribbon BufferGeometry with bright neon core for the active trail.
    */
   _buildTrailRibbonMesh() {
     const maxVerts = (this.maxTrailSegments + 2) * 2;
@@ -171,18 +180,15 @@ export class Contender {
     this.trailGeometry = new THREE.BufferGeometry();
     this.trailPosAttr = new THREE.BufferAttribute(positions, 3);
     this.trailPosAttr.setUsage(THREE.DynamicDrawUsage);
+    this.trailUvAttr = new THREE.BufferAttribute(uvs, 2);
+    this.trailUvAttr.setUsage(THREE.DynamicDrawUsage);
+
     this.trailGeometry.setAttribute('position', this.trailPosAttr);
-    this.trailGeometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    this.trailGeometry.setAttribute('uv', this.trailUvAttr);
     this.trailGeometry.setIndex(indices);
     this.trailGeometry.setDrawRange(0, 0);
 
-    this.trailMaterial = new THREE.MeshBasicMaterial({
-      color: this.color,
-      transparent: true,
-      opacity: 0.9,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    });
+    this.trailMaterial = createTrailRibbonMaterial(this.color);
 
     this.trailMesh = new THREE.Mesh(this.trailGeometry, this.trailMaterial);
     this.trailMesh.frustumCulled = false;
@@ -194,7 +200,7 @@ export class Contender {
    * Builds wake foam, golden speed-surge particles, and ghostly ectoplasm wisp particles.
    */
   _buildWakeParticles() {
-    this.wakeCount = 30;
+    this.wakeCount = 34;
     this.wakePositions = new Float32Array(this.wakeCount * 3);
     this.wakeAges = new Float32Array(this.wakeCount);
     for (let i = 0; i < this.wakeCount; i++) {
@@ -208,9 +214,9 @@ export class Contender {
 
     this.wakeMaterial = new THREE.PointsMaterial({
       color: 0xffffff,
-      size: 1.55,
+      size: 1.85,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.8,
       blending: THREE.AdditiveBlending,
       depthWrite: false
     });
@@ -234,6 +240,7 @@ export class Contender {
     this.state = 'ALIVE';
     this.isEliminated = false;
     this.isOutside = false;
+    this.isDrawingTrail = false;
     this.turnInput = 0;
     this.currentTurnRate = 0;
     this.spawnImmunityTimer = CONFIG.SPAWN_IMMUNITY_DURATION;
@@ -273,6 +280,7 @@ export class Contender {
     this.state = 'GHOST';
     this.isEliminated = true;
     this.isOutside = false;
+    this.isDrawingTrail = false;
     this.spawnImmunityTimer = 0;
     this.stunTimer = 0;
 
@@ -312,11 +320,50 @@ export class Contender {
     }
   }
 
+  /**
+   * Strictly clears ONLY the active unclosed trail (`activeTrailCells` and 3D ribbon mesh).
+   * NEVER clears, resets, or modifies `ownedCells`!
+   */
   clearTrail() {
     this.trailPoints.length = 0;
     this.isOutside = false;
+    this.isDrawingTrail = false;
     this.trailGeometry.setDrawRange(0, 0);
     this.territoryGrid.clearTrailMarkers(this.id);
+  }
+
+  /**
+   * CRITICAL BUGFIX: Called when a Patrolling Shark bites/cuts this contender's active trail.
+   * 1. ONLY clears `activeTrailCells` and the 3D trail ribbon mesh (`this.clearTrail()`).
+   * 2. NEVER clears, resets, or modifies `ownedCells`!
+   * 3. Snaps/teleports the contender back onto the nearest valid cell of their existing `ownedCells`
+   *    (and ensures Territory Integrity Fallback if `ownedCells.size === 0`), so the contender
+   *    never loses their home island and is never locked out of drawing new trails!
+   */
+  handleSharkTrailSnap() {
+    // 1. Clear ONLY the active trail (ownedCells remain 100% untouched!)
+    this.clearTrail();
+
+    // 2. Ensure contender has a valid base (Territory Integrity Fallback)
+    this.territoryGrid.ensureContenderHasBase(this);
+
+    // 3. Snap contender back onto the nearest valid cell of their existing ownedCells
+    const nearestOwnedPos = this.territoryGrid.findNearestOwnedPoint(this.id, this.position);
+    if (nearestOwnedPos) {
+      this.normal.copy(nearestOwnedPos).normalize();
+      this.position.copy(this.normal).multiplyScalar(this.radius);
+      this.heading.sub(this.normal.clone().multiplyScalar(this.heading.dot(this.normal)));
+      if (this.heading.lengthSq() < 1e-5) {
+        const ref = Math.abs(this.normal.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        this.heading.crossVectors(ref, this.normal);
+      }
+      this.heading.normalize();
+    }
+
+    this.isOutside = false;
+    this.isDrawingTrail = false;
+    this.stunTimer = CONFIG.SHARK_STUN_DURATION;
+    this.avatar.triggerSquashImpulse(0.55);
   }
 
   getCurrentTrailWidth() {
@@ -374,11 +421,11 @@ export class Contender {
 
   /**
    * Advances contender movement on the sphere surface:
-   * - If `state === 'ALIVE'`: full obstacle collision, active ribbon trail, and BFS loop closure.
+   * - If `state === 'ALIVE'`: non-lethal smooth obstacle sliding, active ribbon trail, and BFS loop closure.
    * - If `state === 'GHOST'`: +35% speed, floats 2.5 units above water, passes straight through
    *   all obstacles and trails with zero collision or interference.
    */
-  update(dt, elapsedTime, onLoopClosedCallback, onEliminatedCallback) {
+  update(dt, elapsedTime, onLoopClosedCallback) {
     const isGhost = this.state === 'GHOST';
 
     if (this.booEmoteTimer > 0) {
@@ -386,6 +433,12 @@ export class Contender {
     }
 
     if (!isGhost) {
+      // TERRITORY INTEGRITY FALLBACK (Anti-Softlock Guard):
+      // Every tick, ensure a living contender is NEVER left with 0 ownedCells!
+      if (this.ownedCells.size === 0) {
+        this.territoryGrid.ensureContenderHasBase(this);
+      }
+
       if (this.spawnImmunityTimer > 0) {
         this.spawnImmunityTimer = Math.max(0, this.spawnImmunityTimer - dt);
       }
@@ -400,12 +453,16 @@ export class Contender {
 
       const targetOpacity = this.isCloaked() ? CONFIG.POWERUPS.SEMI_TRANSPARENCY.opacity : 1.0;
       this.avatar.setCloakOpacity(targetOpacity);
-      this.trailMaterial.opacity = this.isCloaked() ? 0.22 : 0.92;
-      this.trailMaterial.color.copy(
-        this.powerUps.SPEED_BOOST > 0
-          ? new THREE.Color(0xffe066).lerp(this.color, 0.5)
-          : this.color
-      );
+
+      if (this.trailMaterial.uniforms) {
+        this.trailMaterial.uniforms.uTime.value = elapsedTime;
+        this.trailMaterial.uniforms.uOpacity.value = this.isCloaked() ? 0.25 : 0.96;
+        this.trailMaterial.uniforms.uColor.value.copy(
+          this.powerUps.SPEED_BOOST > 0
+            ? new THREE.Color(0xffe066).lerp(this.color, 0.5)
+            : this.color
+        );
+      }
 
       if (this.spawnImmunityTimer > 0) {
         this.shieldMat.color.setHex(0xffffff);
@@ -426,23 +483,29 @@ export class Contender {
     }
 
     // Smooth steering angular velocity in tangent plane
+    const gameSpeedMult = CONFIG.GAME_SPEED_MULTIPLIER || 1.0;
     const targetTurn = THREE.MathUtils.clamp(this.turnInput, -1, 1) * CONFIG.TURN_SPEED;
     this.currentTurnRate = THREE.MathUtils.lerp(this.currentTurnRate, targetTurn, Math.min(1, dt * 11.0));
 
-    let speedRatio = 1.0;
+    let speedRatio = gameSpeedMult;
 
     if (isGhost || this.stunTimer <= 0) {
       if (Math.abs(this.currentTurnRate) > 0.0001) {
         this.heading.applyAxisAngle(this.normal, this.currentTurnRate * dt);
       }
 
-      let speed = CONFIG.BASE_SPEED;
+      let speed = CONFIG.BASE_SPEED * gameSpeedMult;
+      if (!this.isPlayer) {
+        const diffPreset = CONFIG.DIFFICULTY_PRESETS[CONFIG.DIFFICULTY] || CONFIG.DIFFICULTY_PRESETS.normal;
+        speed *= diffPreset.botSpeedMult || 1.0;
+      }
+
       if (isGhost) {
         speed *= CONFIG.GHOST_SPEED_MULTIPLIER; // +35% speed in Ghost Realm!
-        speedRatio = CONFIG.GHOST_SPEED_MULTIPLIER;
+        speedRatio = gameSpeedMult * CONFIG.GHOST_SPEED_MULTIPLIER;
       } else if (this.powerUps.SPEED_BOOST > 0) {
         speed *= CONFIG.POWERUPS.SPEED_BOOST.speedMultiplier;
-        speedRatio = CONFIG.POWERUPS.SPEED_BOOST.speedMultiplier;
+        speedRatio = gameSpeedMult * CONFIG.POWERUPS.SPEED_BOOST.speedMultiplier;
       }
 
       const prevPos = this.position.clone();
@@ -455,10 +518,8 @@ export class Contender {
       this.heading.sub(this.normal.clone().multiplyScalar(this.heading.dot(this.normal))).normalize();
 
       if (!isGhost) {
-        // Living contenders collide/slide with static obstacles and paint territory
-        this._handleObstacleCollisions(onEliminatedCallback);
-        if (this.state === 'GHOST') return;
-
+        // Non-lethal solid obstacle sliding resolution (NEVER kills or breaks trail!)
+        this._handleObstacleCollisions();
         this.position.copy(this.normal).multiplyScalar(this.radius);
         this._updateTerritoryAndTrail(prevPos, onLoopClosedCallback);
       } else {
@@ -479,26 +540,27 @@ export class Contender {
     this._updateWakeParticles(dt);
   }
 
-  _handleObstacleCollisions(onEliminatedCallback) {
+  /**
+   * NON-LETHAL SOLID OBSTACLES (Smooth Tangential Sliding Resolution — Zero Deaths):
+   * Colliding with rocks, giant trees, or coral reefs NEVER kills the player,
+   * NEVER resets the player, and NEVER breaks their active trail.
+   * Projects the octopus radially outward onto `R_obs + R_player` and slides its forward
+   * velocity vector smoothly along the obstacle's tangent perimeter.
+   */
+  _handleObstacleCollisions() {
     const obstacles = this.sphereWorld.obstacles;
-    const vesselPad = 1.65;
+    const R_player = 2.4; // Smooth collision radius for 1.8x Derpy Octopus
 
     for (let i = 0; i < obstacles.length; i++) {
       const obs = obstacles[i];
-      const minArcDist = obs.radius + vesselPad;
+      const minArcDist = obs.radius + R_player;
       const minAngle = minArcDist / this.radius;
 
       const angle = this.normal.angleTo(obs.normal);
       if (angle < minAngle) {
-        this.avatar.triggerSquashImpulse(0.32);
+        this.avatar.triggerSquashImpulse(0.24);
 
-        if (CONFIG.STRICT_OBSTACLE_CRASH && this.isOutside && this.spawnImmunityTimer <= 0) {
-          if (onEliminatedCallback) {
-            onEliminatedCallback(this, null, 'Bonked head-on into ' + obs.type.replace('_', ' '));
-          }
-          return;
-        }
-
+        // Compute outward radial tangent direction from obstacle center to player
         const pushDir = new THREE.Vector3()
           .subVectors(this.normal, obs.normal)
           .sub(obs.normal.clone().multiplyScalar(this.normal.dot(obs.normal)));
@@ -508,18 +570,29 @@ export class Contender {
         }
         pushDir.normalize();
 
+        // Project octopus position radially outward onto the obstacle perimeter (R_obs + R_player)
         this.normal
           .copy(obs.normal)
           .multiplyScalar(Math.cos(minAngle))
           .addScaledVector(pushDir, Math.sin(minAngle))
           .normalize();
 
-        const radialTangent = pushDir
+        // Slide forward velocity vector (heading) smoothly along the obstacle's tangent plane
+        const radialOutward = pushDir
+          .clone()
           .sub(this.normal.clone().multiplyScalar(pushDir.dot(this.normal)))
           .normalize();
-        const inwardDot = this.heading.dot(radialTangent);
+
+        const inwardDot = this.heading.dot(radialOutward);
         if (inwardDot < 0) {
-          this.heading.addScaledVector(radialTangent, -inwardDot * 1.15);
+          // Remove inward radial component so velocity glides tangentially around the obstacle
+          this.heading.addScaledVector(radialOutward, -inwardDot);
+
+          // If hitting almost dead-center head-on, nudge along the tangent direction
+          if (this.heading.lengthSq() < 0.05) {
+            const slideTangent = new THREE.Vector3().crossVectors(this.normal, radialOutward).normalize();
+            this.heading.copy(slideTangent);
+          }
         }
         this.heading.sub(this.normal.clone().multiplyScalar(this.heading.dot(this.normal))).normalize();
       }
@@ -527,6 +600,11 @@ export class Contender {
   }
 
   _updateTerritoryAndTrail(prevPos, onLoopClosedCallback) {
+    // Territory Integrity Fallback check
+    if (this.ownedCells.size === 0 && this.state === 'ALIVE') {
+      this.territoryGrid.ensureContenderHasBase(this);
+    }
+
     const currentCell = this.territoryGrid.getCellAtPosition(this.normal);
     if (currentCell < 0) return;
 
@@ -552,10 +630,15 @@ export class Contender {
     } else {
       if (!this.isOutside) {
         this.isOutside = true;
+        this.isDrawingTrail = true;
+
+        // Anchor trail start cleanly to the nearest ownedCells border
+        const borderAnchor = this.territoryGrid.findNearestOwnedPoint(this.id, prevPos) || prevPos;
         this.trailPoints.length = 0;
-        this.trailPoints.push(prevPos.clone());
+        this.trailPoints.push(borderAnchor.clone());
         this.trailPoints.push(this.position.clone());
       } else {
+        this.isDrawingTrail = true;
         const lastPt = this.trailPoints[this.trailPoints.length - 1];
         if (lastPt.distanceTo(this.position) >= CONFIG.TRAIL_SAMPLE_DISTANCE) {
           if (this.trailPoints.length < this.maxTrailSegments) {
@@ -581,6 +664,7 @@ export class Contender {
 
     const halfW = trailWidth * 0.5;
     const posArr = this.trailPosAttr.array;
+    const uvArr = this.trailUvAttr.array;
     const count = Math.min(pts.length, this.maxTrailSegments);
 
     const pCurr = new THREE.Vector3();
@@ -615,9 +699,9 @@ export class Contender {
 
       side.crossVectors(nVec, dir).normalize();
 
-      const baseX = nVec.x * (this.radius + 0.52);
-      const baseY = nVec.y * (this.radius + 0.52);
-      const baseZ = nVec.z * (this.radius + 0.52);
+      const baseX = nVec.x * (this.radius + 0.42);
+      const baseY = nVec.y * (this.radius + 0.42);
+      const baseZ = nVec.z * (this.radius + 0.42);
 
       const vIdx = i * 6;
       posArr[vIdx]     = baseX + side.x * halfW;
@@ -627,9 +711,17 @@ export class Contender {
       posArr[vIdx + 3] = baseX - side.x * halfW;
       posArr[vIdx + 4] = baseY - side.y * halfW;
       posArr[vIdx + 5] = baseZ - side.z * halfW;
+
+      const uIdx = i * 4;
+      const vCoord = i / Math.max(1, count);
+      uvArr[uIdx]     = 0.0;
+      uvArr[uIdx + 1] = vCoord;
+      uvArr[uIdx + 2] = 1.0;
+      uvArr[uIdx + 3] = vCoord;
     }
 
     this.trailPosAttr.needsUpdate = true;
+    this.trailUvAttr.needsUpdate = true;
     this.trailGeometry.setDrawRange(0, count * 6);
   }
 
@@ -641,7 +733,7 @@ export class Contender {
     const isGhost = this.state === 'GHOST';
     const floatHeight = isGhost
       ? CONFIG.GHOST_FLOAT_OFFSET + Math.sin(elapsedTime * 3.2 + this.id) * 0.42
-      : 0.32 + Math.sin(elapsedTime * 4.5 + this.id) * 0.18;
+      : 0.36 + Math.sin(elapsedTime * 4.5 + this.id) * 0.18;
 
     this.mesh.position.copy(this.normal).multiplyScalar(this.radius + floatHeight);
 
@@ -662,12 +754,12 @@ export class Contender {
     if (isGhost) {
       // Ghostly ectoplasm wisp particles trailing behind the floating Ghost Octopus!
       this.wakeMaterial.color.setHex(0x80ffea);
-      this.wakeMaterial.size = 1.95;
-      this.wakeMaterial.opacity = 0.62;
+      this.wakeMaterial.size = 2.15;
+      this.wakeMaterial.opacity = 0.65;
     } else {
-      this.wakeMaterial.color.setHex(isBoost ? 0xffd147 : 0xe0fbfc);
-      this.wakeMaterial.size = isBoost ? 2.25 : 1.45;
-      this.wakeMaterial.opacity = this.isCloaked() ? 0.15 : 0.72;
+      this.wakeMaterial.color.setHex(isBoost ? 0xffd147 : 0xffffff);
+      this.wakeMaterial.size = isBoost ? 2.45 : 1.75;
+      this.wakeMaterial.opacity = this.isCloaked() ? 0.15 : 0.78;
     }
 
     const right = new THREE.Vector3().crossVectors(this.heading, this.normal).normalize();
@@ -677,10 +769,10 @@ export class Contender {
       this.wakeAges[i] += dt * (isBoost ? 2.4 : 1.5);
       if (this.wakeAges[i] >= 1.0) {
         this.wakeAges[i] -= 1.0;
-        const spread = (Math.random() - 0.5) * 2.1;
+        const spread = (Math.random() - 0.5) * 3.1;
         const spawnPos = this.position
           .clone()
-          .addScaledVector(this.heading, -1.7)
+          .addScaledVector(this.heading, -2.5)
           .addScaledVector(right, spread)
           .normalize()
           .multiplyScalar(altitude + (isGhost ? (Math.random() - 0.5) * 0.9 : 0));
@@ -694,18 +786,22 @@ export class Contender {
   }
 
   /**
-   * Returns the 3D world position above the octopus's head for floating nameplate projection.
+   * Returns the 3D world position above the 1.8x octopus's head for floating nameplate projection.
+   * Raised +3.5 units higher (`CONFIG.NAMEPLATE_HEIGHT_OFFSET = 7.8`) so it never covers the hat/headgear!
    */
   getHeadWorldPosition(targetVec = new THREE.Vector3()) {
-    const extraHeight = this.state === 'GHOST' ? CONFIG.GHOST_FLOAT_OFFSET + 4.5 : 4.2;
+    const baseOffset = CONFIG.NAMEPLATE_HEIGHT_OFFSET || 7.8;
+    const extraHeight = this.state === 'GHOST'
+      ? CONFIG.GHOST_FLOAT_OFFSET + baseOffset + 0.4
+      : baseOffset;
     return targetVec.copy(this.normal).multiplyScalar(this.radius + extraHeight);
   }
 }
 
 /**
  * Local Player Controller:
- * Handles Isometric Spherical Camera Rig, multi-modal steering input (even while haunting as a Ghost!),
- * and Ghost Realm `[E]` / `Click` Boo Emote triggers.
+ * Handles Isometric Spherical Camera Rig (FOV = 28, Elevation = 58 deg, Distance = 42),
+ * multi-modal steering input, and Ghost Realm `[E]` / `Click` Boo Emote triggers.
  */
 export class PlayerController extends Contender {
   constructor(scene, territoryGrid, sphereWorld, camera, domElement) {
@@ -883,6 +979,12 @@ export class PlayerController extends Contender {
     this.turnInput = THREE.MathUtils.clamp(signedAngle * 2.4, -1.0, 1.0);
   }
 
+  /**
+   * Isometric Spherical Camera Framing:
+   * Uses narrow `camera.fov = 28`, elevation angle `58 deg` above the local tangent plane
+   * (`32 deg` polar tilt from the outward normal), and distance `42` units so the vibrant
+   * turquoise ocean surface fills 95-100% of the screen!
+   */
   updateCamera(dt) {
     const lerpFactor = Math.min(1.0, dt * CONFIG.CAMERA_SMOOTHNESS);
 
@@ -890,7 +992,9 @@ export class PlayerController extends Contender {
     this.camNorth.sub(this.camNormal.clone().multiplyScalar(this.camNorth.dot(this.camNormal))).normalize();
     this.camEast.crossVectors(this.camNorth, this.camNormal).normalize();
 
-    const tiltRad = THREE.MathUtils.degToRad(CONFIG.CAMERA_TILT_DEG);
+    const elevationDeg = CONFIG.CAMERA_ELEVATION_DEG !== undefined ? CONFIG.CAMERA_ELEVATION_DEG : 58;
+    const tiltFromNormalDeg = 90 - elevationDeg; // 32 degrees from surface normal = 58 deg elevation
+    const tiltRad = THREE.MathUtils.degToRad(tiltFromNormalDeg);
     const dist = CONFIG.CAMERA_DISTANCE;
 
     const camOffsetDir = new THREE.Vector3()

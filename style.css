@@ -4,11 +4,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
 
 :root {
-  --bg-deep: #031326;
-  --glass-bg: rgba(6, 28, 52, 0.72);
-  --glass-bg-strong: rgba(5, 22, 42, 0.90);
-  --glass-border: rgba(140, 235, 255, 0.20);
-  --glass-highlight: rgba(255, 255, 255, 0.08);
+  --bg-deep: #87CEEB;
+  --glass-bg: rgba(6, 28, 52, 0.76);
+  --glass-bg-strong: rgba(5, 22, 42, 0.92);
+  --glass-border: rgba(140, 235, 255, 0.28);
+  --glass-highlight: rgba(255, 255, 255, 0.12);
   --text-primary: #f2fbff;
   --text-secondary: #98c6dc;
   --accent-aqua: #00f5d4;
@@ -1386,3 +1386,166 @@ kbd {
     display: none;
   }
 }
+
+/* ============================================================================
+   DIAGONAL GOLDEN SUNBEAM OVERLAY (GOD RAYS FROM TOP-LEFT)
+   ============================================================================ */
+.hud-sunbeams-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  background:
+    linear-gradient(
+      128deg,
+      rgba(255, 245, 195, 0.22) 0%,
+      rgba(255, 236, 170, 0.08) 16%,
+      transparent 30%,
+      rgba(255, 242, 185, 0.14) 38%,
+      transparent 52%,
+      rgba(255, 238, 175, 0.09) 60%,
+      transparent 76%
+    ),
+    radial-gradient(circle at 8% 6%, rgba(255, 246, 200, 0.28), transparent 48%);
+  mix-blend-mode: screen;
+}
+
+/* ============================================================================
+   EMERGENCY RESET / UNSTUCK [R] HUD BUTTON
+   ============================================================================ */
+.hud-action-utility-row {
+  display: flex;
+  width: 100%;
+}
+
+.hud-unstuck-reset-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(255, 190, 11, 0.22), rgba(255, 89, 100, 0.22));
+  border: 1px solid rgba(255, 209, 71, 0.55);
+  color: #fff8dc;
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
+}
+
+.hud-unstuck-reset-btn:hover {
+  background: linear-gradient(135deg, rgba(255, 190, 11, 0.36), rgba(255, 89, 100, 0.34));
+  box-shadow: 0 4px 14px rgba(255, 190, 11, 0.28);
+  transform: translateY(-1px);
+}
+
+.hud-unstuck-reset-btn kbd {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 209, 71, 0.55);
+  color: var(--accent-gold);
+}
+
+/* ============================================================================
+   PRE-GAME LOBBY: ⚙️ MATCH & HAZARD SETTINGS CONTROLS
+   ============================================================================ */
+.match-settings-section {
+  background: rgba(0, 245, 212, 0.05);
+  border: 1px solid rgba(112, 243, 255, 0.22);
+  border-radius: 14px;
+  padding: 12px 14px;
+  gap: 10px;
+}
+
+.setting-control-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setting-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.setting-label-row strong {
+  font-family: var(--font-mono);
+  color: var(--accent-aqua);
+  font-size: 0.76rem;
+}
+
+.setting-pills-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.setting-pills-grid.four-cols {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.setting-pills-grid.three-cols {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.setting-pill-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 6px 6px;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.71rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.setting-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.setting-pill-btn.active {
+  background: rgba(0, 245, 212, 0.2);
+  border-color: var(--accent-aqua);
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(0, 245, 212, 0.24);
+}
+
+.setting-sliders-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.setting-slider-box {
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.setting-slider-box input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent-aqua);
+  cursor: pointer;
+}
+
+.slider-sub-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+

@@ -10,6 +10,7 @@ export class RoomManager {
    * @param {Function} callbacks.onPeerEliminated
    * @param {Function} callbacks.onPeerGhostEmote
    * @param {Function} callbacks.onRoomJoined
+   * @param {Function} callbacks.onRoomSettingsUpdate
    */
   constructor(callbacks = {}) {
     this.callbacks = callbacks;
@@ -82,9 +83,10 @@ export class RoomManager {
   }
 
   /**
-   * Joins a room (`PUBLIC_MAIN` for Quick Play, or a 6-character Room Key for Private/Joined rooms).
+   * Joins a room (`PUBLIC_MAIN` for Quick Play, or a 6-character Room Key for Private/Joined rooms)
+   * and broadcasts `matchSettings` across the room.
    */
-  joinRoom({ mode = 'QUICK_PLAY', roomKey = 'PUBLIC_MAIN', fillWithBots = true } = {}) {
+  joinRoom({ mode = 'QUICK_PLAY', roomKey = 'PUBLIC_MAIN', fillWithBots = true, matchSettings = null } = {}) {
     this.roomMode = mode;
     if (mode === 'QUICK_PLAY') {
       this.roomKey = 'PUBLIC_MAIN';
@@ -99,16 +101,32 @@ export class RoomManager {
       type: 'ROOM_HELLO',
       roomKey: this.roomKey,
       peerId: this.peerId,
+      matchSettings,
       timestamp: Date.now()
     });
+
+    if (matchSettings) {
+      this.broadcastMatchSettings(matchSettings);
+    }
 
     if (this.callbacks.onRoomJoined) {
       this.callbacks.onRoomJoined({
         roomKey: this.roomKey,
         mode: this.roomMode,
-        fillWithBots: this.fillWithBots
+        fillWithBots: this.fillWithBots,
+        matchSettings
       });
     }
+  }
+
+  broadcastMatchSettings(matchSettings) {
+    this._sendPacket({
+      type: 'ROOM_SETTINGS',
+      roomKey: this.roomKey,
+      peerId: this.peerId,
+      matchSettings,
+      timestamp: Date.now()
+    });
   }
 
   /**
@@ -187,6 +205,10 @@ export class RoomManager {
     } else if (packet.type === 'GHOST_EMOTE') {
       if (this.callbacks.onPeerGhostEmote) {
         this.callbacks.onPeerGhostEmote(packet.peerId, packet.nickname);
+      }
+    } else if (packet.type === 'ROOM_SETTINGS' && packet.matchSettings) {
+      if (this.callbacks.onRoomSettingsUpdate) {
+        this.callbacks.onRoomSettingsUpdate(packet.matchSettings);
       }
     }
   }

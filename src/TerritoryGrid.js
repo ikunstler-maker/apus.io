@@ -1,5 +1,5 @@
 // ============================================================================
-// APUS.IO — SPHERICAL GEODESIC GRID, CUSTOM PATTERNS & BFS FLOOD-FILL ENGINE
+// APUS.IO — SPHERICAL GEODESIC GRID, STRICT STATE SEPARATION & BFS FLOOD-FILL
 // ============================================================================
 import * as THREE from 'three';
 import { CONFIG, getPatternIndex, getBorderEffectIndex } from './Config.js';
@@ -17,18 +17,23 @@ export class TerritoryGrid {
 
     const baseGeo = new THREE.IcosahedronGeometry(this.radius, this.detail);
     this.geometry = baseGeo.index ? baseGeo.toNonIndexed() : baseGeo;
+    this.geometry.computeVertexNormals();
 
     const posAttr = this.geometry.attributes.position;
     this.cellCount = posAttr.count / 3; // 15,680 cells
 
-    // Per-cell logical state arrays
+    // Per-cell logical state arrays (STRICTLY SEPARATED: owner vs trailOwner)
     this.cellNormals = new Float32Array(this.cellCount * 3);
     this.owner = new Int16Array(this.cellCount).fill(-1);      // -1 = neutral water, >= 0 = contenderId
     this.trailOwner = new Int16Array(this.cellCount).fill(-1); // -1 = none, >= 0 = active trail contenderId
     this.obstacle = new Uint8Array(this.cellCount).fill(0);    // 0 = navigable water, 1 = impassable island/cliff/reef
 
-    // Per-contender customization lookup tables (dynamically updated when contenders customize loadouts)
     const maxContenders = Math.max(16, CONFIG.CONTENDER_PALETTE.length);
+
+    // Explicit Set tracking per contender for O(1) size checks & strict state separation
+    this.ownedCellsSets = Array.from({ length: maxContenders }, () => new Set());
+    this.activeTrailCellsSets = Array.from({ length: maxContenders }, () => new Set());
+
     this.contenderRGB = Array.from({ length: maxContenders }, (_, i) => {
       const p = CONFIG.CONTENDER_PALETTE[i % CONFIG.CONTENDER_PALETTE.length];
       const c = new THREE.Color(p.color);
@@ -41,7 +46,6 @@ export class TerritoryGrid {
       this.contenderBorderIndex[i] = i % CONFIG.BORDER_EFFECTS.length;
     }
 
-    // Ownership counts for instant O(1) leaderboard percentage calculation
     this.ownerCounts = new Int32Array(maxContenders).fill(0);
     this.navigableCellCount = this.cellCount;
 
@@ -76,7 +80,6 @@ export class TerritoryGrid {
     this.mesh.renderOrder = 2;
     this.scene.add(this.mesh);
 
-    // Pre-allocate BFS Flood-Fill buffers
     this.bfsVisited = new Int32Array(this.cellCount);
     this.bfsQueue = new Int32Array(this.cellCount);
     this.bfsStamp = 1;
@@ -85,9 +88,19 @@ export class TerritoryGrid {
   }
 
   /**
-   * Registers or updates a contender's customized territory appearance
-   * (`baseColor`, `patternId`, `borderEffectId`).
+   * Returns the Set of owned cell indices for `contenderId`.
    */
+  getOwnedCellsSet(contenderId) {
+    return this.ownedCellsSets[contenderId];
+  }
+
+  /**
+   * Returns the Set of active trail cell indices for `contenderId`.
+   */
+  getActiveTrailCellsSet(contenderId) {
+    return this.activeTrailCellsSets[contenderId];
+  }
+
   setContenderStyle(contenderId, colorHexOrInt, patternId = 'solid_gloss', borderEffectId = 'bubbly_foam', syncGPU = false) {
     const c = new THREE.Color(colorHexOrInt);
     this.contenderRGB[contenderId] = [c.r, c.g, c.b];
@@ -288,8 +301,12 @@ export class TerritoryGrid {
     return result;
   }
 
+  /**
+   * Note: We keep `obstacle` tracking mild on the inner core so players can still
+   * capture territory right up to the sandy shoreline of every island!
+   */
   markObstacleDisk(normalVec, worldRadius) {
-    const cells = this.getCellsInRadius(normalVec, worldRadius);
+    const cells = this.getCellsInRadius(normalVec, worldRadius * 0.65);
     for (let i = 0; i < cells.length; i++) {
       const c = cells[i];
       if (this.obstacle[c] === 0) {
@@ -299,6 +316,9 @@ export class TerritoryGrid {
     }
   }
 
+  /**
+   * Updates `this.owner[cellIdx]` and synchronizes `this.ownedCellsSets` + `this.ownerCounts`.
+   */
   _setCellOwner(cellIdx, newOwnerId) {
     if (this.obstacle[cellIdx] !== 0) return false;
     const prevOwner = this.owner[cellIdx];
@@ -306,35 +326,62 @@ export class TerritoryGrid {
 
     if (prevOwner >= 0) {
       this.ownerCounts[prevOwner] = Math.max(0, this.ownerCounts[prevOwner] - 1);
+      this.ownedCellsSets[prevOwner]?.delete(cellIdx);
     }
     this.owner[cellIdx] = newOwnerId;
     if (newOwnerId >= 0) {
       this.ownerCounts[newOwnerId]++;
+      this.ownedCellsSets[newOwnerId]?.add(cellIdx);
     }
     return true;
   }
 
+  /**
+   * Claims a circular disk of cells for `contenderId`.
+   * If `contenderId`'s center lands near an obstacle, also claims unobstructed cells around it.
+   */
   claimDisk(posOrNormal, worldRadius, contenderId, syncGPU = true) {
     const cells = this.getCellsInRadius(posOrNormal, worldRadius);
     let changed = false;
+    let claimedCount = 0;
     for (let i = 0; i < cells.length; i++) {
       if (this._setCellOwner(cells[i], contenderId)) {
         changed = true;
       }
+      if (this.owner[cells[i]] === contenderId) {
+        claimedCount++;
+      }
     }
+
+    // Fallback: if all cells in `worldRadius` were marked obstacle, force-claim nearest cell ignoring obstacle flag
+    if (claimedCount === 0 && cells.length > 0) {
+      for (let i = 0; i < Math.min(cells.length, 16); i++) {
+        const c = cells[i];
+        this.obstacle[c] = 0;
+        if (this._setCellOwner(c, contenderId)) {
+          changed = true;
+        }
+      }
+    }
+
     if (changed && syncGPU) {
       this.syncBuffersToGPU();
     }
     return changed;
   }
 
+  /**
+   * Stamps active trail cells into `this.trailOwner` and `this.activeTrailCellsSets[contenderId]`
+   * STRICTLY SEPARATELY from `this.owner` / `ownedCellsSets`!
+   */
   stampTrailSegment(prevPos, currPos, contenderId, worldWidth, claimImmediately = false) {
     const dist = prevPos.distanceTo(currPos);
     const steps = Math.max(1, Math.ceil(dist / 0.8));
     const tempVec = new THREE.Vector3();
     let changedTerritory = false;
 
-    const brushRadius = Math.max(1.85, worldWidth * 0.95);
+    const brushRadius = Math.max(1.85, worldWidth * 0.72);
+    const trailSet = this.activeTrailCellsSets[contenderId];
 
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
@@ -344,6 +391,7 @@ export class TerritoryGrid {
         const c = cells[i];
         if (this.obstacle[c] !== 0) continue;
         this.trailOwner[c] = contenderId;
+        if (trailSet) trailSet.add(c);
         if (claimImmediately && this._setCellOwner(c, contenderId)) {
           changedTerritory = true;
         }
@@ -355,34 +403,84 @@ export class TerritoryGrid {
     }
   }
 
+  /**
+   * STRICT STATE SEPARATION:
+   * Clears ONLY `activeTrailCells` (`this.trailOwner`) for `contenderId`.
+   * NEVER clears, resets, or modifies `this.owner` or `ownedCellsSets`!
+   */
   clearTrailMarkers(contenderId) {
-    for (let c = 0; c < this.cellCount; c++) {
-      if (this.trailOwner[c] === contenderId) {
-        this.trailOwner[c] = -1;
+    const trailSet = this.activeTrailCellsSets[contenderId];
+    if (trailSet && trailSet.size > 0) {
+      for (const c of trailSet) {
+        if (this.trailOwner[c] === contenderId) {
+          this.trailOwner[c] = -1;
+        }
+      }
+      trailSet.clear();
+    } else {
+      for (let c = 0; c < this.cellCount; c++) {
+        if (this.trailOwner[c] === contenderId) {
+          this.trailOwner[c] = -1;
+        }
       }
     }
   }
 
+  /**
+   * Wipes a contender's owned territory (`ownedCells`) back to neutral water (-1).
+   * Called ONLY upon full elimination into the Ghost Realm or manual Reset [R].
+   */
   clearContenderTerritory(contenderId) {
+    this.clearTrailMarkers(contenderId);
+
     let changed = false;
-    for (let c = 0; c < this.cellCount; c++) {
-      if (this.trailOwner[c] === contenderId) {
-        this.trailOwner[c] = -1;
+    const ownedSet = this.ownedCellsSets[contenderId];
+    if (ownedSet && ownedSet.size > 0) {
+      for (const c of ownedSet) {
+        if (this.owner[c] === contenderId) {
+          this.owner[c] = -1;
+          changed = true;
+        }
       }
-      if (this.owner[c] === contenderId) {
-        this.owner[c] = -1;
-        changed = true;
+      ownedSet.clear();
+    } else {
+      for (let c = 0; c < this.cellCount; c++) {
+        if (this.owner[c] === contenderId) {
+          this.owner[c] = -1;
+          changed = true;
+        }
       }
     }
+
     this.ownerCounts[contenderId] = 0;
     if (changed) {
       this.syncBuffersToGPU();
     }
   }
 
+  /**
+   * TERRITORY INTEGRITY FALLBACK (ANTI-SOFTLOCK GUARD):
+   * Runs every tick for every `ALIVE` contender. If `ownedCells.size === 0` while `ALIVE`
+   * (e.g., if an enemy stole 100% of their base while their trail was cut), immediately stamps
+   * a fresh circular starter island (`radius = STARTER_ZONE_RADIUS`) right underneath them
+   * so a living player is NEVER left without a base and can ALWAYS draw trails!
+   */
+  ensureContenderHasBase(contender) {
+    if (!contender || contender.state !== 'ALIVE') return false;
+    const ownedSet = this.ownedCellsSets[contender.id];
+    if (!ownedSet || ownedSet.size === 0 || this.ownerCounts[contender.id] <= 0) {
+      this.claimDisk(contender.normal, CONFIG.STARTER_ZONE_RADIUS, contender.id, true);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Closes a contender's active trail loop and executes the spherical BFS Flood-Fill.
+   */
   closeLoopAndFloodFill(contenderId, trailPoints, trailWidth = CONFIG.NORMAL_TRAIL_WIDTH) {
     let newlyCaptured = 0;
-    const brushRadius = Math.max(1.95, trailWidth * 0.95);
+    const brushRadius = Math.max(1.95, trailWidth * 0.72);
 
     for (let i = 0; i < trailPoints.length; i++) {
       const p = trailPoints[i];
@@ -394,11 +492,22 @@ export class TerritoryGrid {
       }
     }
 
-    for (let c = 0; c < this.cellCount; c++) {
-      if (this.trailOwner[c] === contenderId) {
+    const trailSet = this.activeTrailCellsSets[contenderId];
+    if (trailSet && trailSet.size > 0) {
+      for (const c of trailSet) {
         this.trailOwner[c] = -1;
         if (this._setCellOwner(c, contenderId)) {
           newlyCaptured++;
+        }
+      }
+      trailSet.clear();
+    } else {
+      for (let c = 0; c < this.cellCount; c++) {
+        if (this.trailOwner[c] === contenderId) {
+          this.trailOwner[c] = -1;
+          if (this._setCellOwner(c, contenderId)) {
+            newlyCaptured++;
+          }
         }
       }
     }
@@ -457,20 +566,37 @@ export class TerritoryGrid {
     return newlyCaptured;
   }
 
+  /**
+   * Finds the nearest 3D point on the sphere belonging to `contenderId`'s `ownedCells`.
+   */
   findNearestOwnedPoint(contenderId, currentPos) {
     const dir = currentPos.clone().normalize();
     let bestCell = -1;
     let bestDot = -2.0;
 
-    for (let c = 0; c < this.cellCount; c++) {
-      if (this.owner[c] !== contenderId) continue;
-      const idx = c * 3;
-      const dot = dir.x * this.cellNormals[idx] +
-                  dir.y * this.cellNormals[idx + 1] +
-                  dir.z * this.cellNormals[idx + 2];
-      if (dot > bestDot) {
-        bestDot = dot;
-        bestCell = c;
+    const ownedSet = this.ownedCellsSets[contenderId];
+    if (ownedSet && ownedSet.size > 0) {
+      for (const c of ownedSet) {
+        const idx = c * 3;
+        const dot = dir.x * this.cellNormals[idx] +
+                    dir.y * this.cellNormals[idx + 1] +
+                    dir.z * this.cellNormals[idx + 2];
+        if (dot > bestDot) {
+          bestDot = dot;
+          bestCell = c;
+        }
+      }
+    } else {
+      for (let c = 0; c < this.cellCount; c++) {
+        if (this.owner[c] !== contenderId) continue;
+        const idx = c * 3;
+        const dot = dir.x * this.cellNormals[idx] +
+                    dir.y * this.cellNormals[idx + 1] +
+                    dir.z * this.cellNormals[idx + 2];
+        if (dot > bestDot) {
+          bestDot = dot;
+          bestCell = c;
+        }
       }
     }
 
@@ -488,9 +614,6 @@ export class TerritoryGrid {
     return (this.ownerCounts[contenderId] / this.navigableCellCount) * 100;
   }
 
-  /**
-   * Pushes updated territory colors, pattern indices, and border effect types to the GPU.
-   */
   syncBuffersToGPU() {
     const colors = this.colorArray;
     const alphas = this.alphaArray;

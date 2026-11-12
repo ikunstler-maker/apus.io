@@ -1,7 +1,8 @@
 // ============================================================================
-// APUS.IO — PRE-GAME LOBBY, LIVE 3D OCTOPUS PREVIEW, ROOM KEYS & CUSTOMIZER
+// APUS.IO — PRE-GAME LOBBY, LIVE 3D OCTOPUS PREVIEW, ROOM KEYS & MATCH SETTINGS
 // ============================================================================
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { CONFIG, getPatternIndex, getBorderEffectIndex } from './Config.js';
 import { DerpyOctopusAvatar } from './DerpyOctopusAvatar.js';
 import { createTerritoryMaterial } from './Shaders.js';
@@ -10,7 +11,7 @@ import { RoomManager } from './RoomManager.js';
 export class PreGameLobby {
   /**
    * @param {Object} options
-   * @param {Function} options.onLaunchMatch Called with { loadout, roomConfig }
+   * @param {Function} options.onLaunchMatch Called with { loadout, roomConfig, matchSettings }
    */
   constructor({ onLaunchMatch } = {}) {
     this.onLaunchMatch = onLaunchMatch;
@@ -32,6 +33,14 @@ export class PreGameLobby {
       generatedPrivateKey: RoomManager.generateRoomKey(),
       joinKeyInput: '',
       fillWithBots: true
+    };
+
+    // Match & Hazard Settings state
+    this.matchSettings = {
+      gameSpeed: CONFIG.GAME_SPEED_MULTIPLIER || 1.0,
+      difficulty: CONFIG.DIFFICULTY || 'normal',
+      sharkCount: CONFIG.SHARK_COUNT !== undefined ? CONFIG.SHARK_COUNT : 5,
+      sharkSpeed: CONFIG.SHARK_SPEED_MULTIPLIER || 1.0
     };
 
     this._injectLobbyDOM();
@@ -92,6 +101,33 @@ export class PreGameLobby {
       </button>
     `).join('');
 
+    const gameSpeedOptions = [
+      { val: 0.5, label: '0.5x (Chill)' },
+      { val: 1.0, label: '1.0x (Normal)' },
+      { val: 1.5, label: '1.5x (Fast)' },
+      { val: 2.0, label: '2.0x (Turbo)' }
+    ];
+    const gameSpeedBtnsHTML = gameSpeedOptions.map((opt) => `
+      <button
+        type="button"
+        class="setting-pill-btn speed-preset-btn ${opt.val === this.matchSettings.gameSpeed ? 'active' : ''}"
+        data-speed="${opt.val}"
+      >${opt.label}</button>
+    `).join('');
+
+    const difficultyOptions = [
+      { id: 'easy', label: '🏝️ Easy (Cozy Reef)' },
+      { id: 'normal', label: '🌊 Normal (Balanced Ocean)' },
+      { id: 'hard', label: '🦈 Hard (Apex Chaos)' }
+    ];
+    const difficultyBtnsHTML = difficultyOptions.map((opt) => `
+      <button
+        type="button"
+        class="setting-pill-btn diff-preset-btn ${opt.id === this.matchSettings.difficulty ? 'active' : ''}"
+        data-difficulty="${opt.id}"
+      >${opt.label}</button>
+    `).join('');
+
     this.backdrop.innerHTML = `
       <div class="lobby-modal-shell">
         <!-- Left Column: Live 3D Derpy Octopus Preview + Identity + Room Key Matchmaking -->
@@ -100,13 +136,13 @@ export class PreGameLobby {
             <span class="lobby-badge-octo">🐙</span>
             <div>
               <h2>APUS<span>.IO</span> LOBBY</h2>
-              <p>Derpy Spherical Octopus Turf Wars</p>
+              <p>Sunny Claymorphism Spherical Octopus Turf Wars</p>
             </div>
           </div>
 
           <!-- 3D Rotating Preview Canvas -->
           <div class="lobby-preview-box">
-            <canvas id="lobby-3d-preview-canvas" width="320" height="230"></canvas>
+            <canvas id="lobby-3d-preview-canvas" width="320" height="220"></canvas>
             <div class="preview-caption">
               <span id="preview-loadout-tag">🥣 Tin Colander • 🎨 Messy Splatter</span>
             </div>
@@ -184,9 +220,81 @@ export class PreGameLobby {
           </div>
         </div>
 
-        <!-- Right Column: 4-Part Visual Customizer + Launch Button -->
+        <!-- Right Column: Match & Hazard Settings + 4-Part Visual Customizer + Launch Button -->
         <div class="lobby-right-col">
           <div class="customizer-scroll-area">
+            <!-- ⚙️ Match & Hazard Settings Section -->
+            <div class="customizer-section match-settings-section" id="lobby-match-settings-section">
+              <div class="sec-title-row">
+                <h3>⚙️ Match & Hazard Settings</h3>
+                <span class="sec-hint">Synced Across Room</span>
+              </div>
+
+              <!-- 1. Game Speed Multiplier -->
+              <div class="setting-control-block">
+                <div class="setting-label-row">
+                  <span>🏃 Game Speed Multiplier</span>
+                  <strong id="lobby-speed-val-label">${this.matchSettings.gameSpeed.toFixed(1)}x</strong>
+                </div>
+                <div class="setting-pills-grid four-cols" id="lobby-game-speed-group">
+                  ${gameSpeedBtnsHTML}
+                </div>
+              </div>
+
+              <!-- 2. Overall Difficulty Preset -->
+              <div class="setting-control-block">
+                <div class="setting-label-row">
+                  <span>🎯 Overall Difficulty Preset</span>
+                </div>
+                <div class="setting-pills-grid three-cols" id="lobby-difficulty-group">
+                  ${difficultyBtnsHTML}
+                </div>
+              </div>
+
+              <!-- 3. Shark Count & 4. Shark Speed Sliders -->
+              <div class="setting-sliders-row">
+                <div class="setting-slider-box">
+                  <div class="setting-label-row">
+                    <label for="lobby-shark-count-slider">🦈 Shark Count</label>
+                    <strong id="lobby-shark-count-val">${this.matchSettings.sharkCount === 0 ? '0 (No Sharks)' : this.matchSettings.sharkCount}</strong>
+                  </div>
+                  <input
+                    type="range"
+                    id="lobby-shark-count-slider"
+                    min="0"
+                    max="15"
+                    step="1"
+                    value="${this.matchSettings.sharkCount}"
+                  />
+                  <div class="slider-sub-ticks">
+                    <span>0 (None)</span>
+                    <span>5 (Default)</span>
+                    <span>15 (Swarm)</span>
+                  </div>
+                </div>
+
+                <div class="setting-slider-box">
+                  <div class="setting-label-row">
+                    <label for="lobby-shark-speed-slider">⚡ Shark Speed</label>
+                    <strong id="lobby-shark-speed-val">${this._formatSharkSpeedLabel(this.matchSettings.sharkSpeed)}</strong>
+                  </div>
+                  <input
+                    type="range"
+                    id="lobby-shark-speed-slider"
+                    min="0.5"
+                    max="2.0"
+                    step="0.1"
+                    value="${this.matchSettings.sharkSpeed}"
+                  />
+                  <div class="slider-sub-ticks">
+                    <span>0.5x (Lazy)</span>
+                    <span>1.0x</span>
+                    <span>2.0x (Frenzy)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- 1. Paint Fill Color (12 Colors) -->
             <div class="customizer-section">
               <div class="sec-title-row">
@@ -245,36 +353,50 @@ export class PreGameLobby {
     document.body.appendChild(this.backdrop);
   }
 
+  _formatSharkSpeedLabel(val) {
+    const num = Number(val) || 1.0;
+    if (num <= 0.6) return `${num.toFixed(1)}x (Lazy)`;
+    if (num >= 1.8) return `${num.toFixed(1)}x (Frenzy)`;
+    if (Math.abs(num - 1.0) < 0.06) return `1.0x (Normal)`;
+    return `${num.toFixed(1)}x`;
+  }
+
   /**
-   * Sets up a live 3D rotating preview of the player's DerpyOctopusAvatar flailing its
-   * tentacles over a sample spherical patch of their customized territory paint!
+   * Sets up a live 3D rotating preview of the player's 1.8x DerpyOctopusAvatar flailing its
+   * thick spline tentacles over a sample spherical patch of their customized territory paint!
    */
   _init3DPreviewStage() {
     this.previewCanvas = document.getElementById('lobby-3d-preview-canvas');
     this.previewScene = new THREE.Scene();
 
-    this.previewCamera = new THREE.PerspectiveCamera(36, 320 / 230, 0.5, 100);
-    this.previewCamera.position.set(0, 4.4, 8.8);
-    this.previewCamera.lookAt(0, 1.4, 0);
+    this.previewCamera = new THREE.PerspectiveCamera(34, 320 / 220, 0.5, 100);
+    this.previewCamera.position.set(0, 7.6, 14.5);
+    this.previewCamera.lookAt(0, 2.2, 0);
 
     this.previewRenderer = new THREE.WebGLRenderer({
       canvas: this.previewCanvas,
       antialias: true,
       alpha: true
     });
-    this.previewRenderer.setSize(320, 230);
+    this.previewRenderer.setSize(320, 220);
     this.previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.previewRenderer.toneMappingExposure = 1.25;
 
-    const hemi = new THREE.HemisphereLight(0xfff6dd, 0x0a3d62, 1.35);
-    const dirLight = new THREE.DirectionalLight(0xfff0c4, 1.7);
-    dirLight.position.set(5, 9, 6);
+    const pmremGenerator = new THREE.PMREMGenerator(this.previewRenderer);
+    this.previewScene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+
+    const hemi = new THREE.HemisphereLight(0xfff5d6, 0x1ca3ec, 1.4);
+    const dirLight = new THREE.DirectionalLight(0xfff0c2, 2.4);
+    dirLight.position.set(6, 11, 8);
     this.previewScene.add(hemi, dirLight);
 
-    // Sample curved territory mat patch underneath the preview octopus
-    const patchRadius = 24;
-    const patchGeo = new THREE.SphereGeometry(patchRadius, 32, 24, 0, Math.PI * 2, 0, 0.16);
+    // Sample curved territory mat patch underneath the 1.8x preview octopus
+    const patchRadius = 32;
+    const patchGeo = new THREE.SphereGeometry(patchRadius, 36, 24, 0, Math.PI * 2, 0, 0.22);
     const nonIndexedPatch = patchGeo.index ? patchGeo.toNonIndexed() : patchGeo;
     nonIndexedPatch.translate(0, -patchRadius + 0.15, 0);
+    nonIndexedPatch.computeVertexNormals();
 
     this.previewPatchVertexCount = nonIndexedPatch.attributes.position.count;
     this.patchColorArr = new Float32Array(this.previewPatchVertexCount * 3);
@@ -283,13 +405,12 @@ export class PreGameLobby {
     this.patchPatternArr = new Float32Array(this.previewPatchVertexCount);
     this.patchBorderTypeArr = new Float32Array(this.previewPatchVertexCount);
 
-    // Mark outer ring vertices of the sample patch as border so the player sees their border effect live!
     const posAttr = nonIndexedPatch.attributes.position;
     for (let v = 0; v < this.previewPatchVertexCount; v++) {
       const vx = posAttr.getX(v);
       const vz = posAttr.getZ(v);
       const r = Math.hypot(vx, vz);
-      this.patchBorderArr[v] = r > 3.15 ? 1.0 : 0.0;
+      this.patchBorderArr[v] = r > 5.4 ? 1.0 : 0.0;
     }
 
     nonIndexedPatch.setAttribute('aColor', new THREE.BufferAttribute(this.patchColorArr, 3));
@@ -303,13 +424,13 @@ export class PreGameLobby {
     this.previewPatchMesh = new THREE.Mesh(this.previewPatchGeo, this.previewPatchMat);
     this.previewScene.add(this.previewPatchMesh);
 
-    // Instantiate the preview DerpyOctopusAvatar
+    // Instantiate the 1.8x preview DerpyOctopusAvatar
     this.previewOctopus = new DerpyOctopusAvatar({
       baseColor: this.loadout.baseColor,
       figurineId: this.loadout.figurineId,
       seed: 7
     });
-    this.previewOctopus.root.position.set(0, 0.2, 0);
+    this.previewOctopus.root.position.set(0, 0.35, 0);
     this.previewScene.add(this.previewOctopus.root);
 
     this._syncPreviewPatchAttributes();
@@ -397,6 +518,48 @@ export class PreGameLobby {
     const joinKeyInput = document.getElementById('lobby-join-key-input');
     joinKeyInput.addEventListener('input', (e) => {
       this.roomConfig.joinKeyInput = e.target.value.toUpperCase();
+    });
+
+    // ⚙️ Match & Hazard Settings Controls
+    const speedBtns = this.backdrop.querySelectorAll('.speed-preset-btn');
+    const speedLabel = document.getElementById('lobby-speed-val-label');
+    speedBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        speedBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const val = parseFloat(btn.getAttribute('data-speed')) || 1.0;
+        this.matchSettings.gameSpeed = val;
+        if (speedLabel) speedLabel.textContent = `${val.toFixed(1)}x`;
+      });
+    });
+
+    const diffBtns = this.backdrop.querySelectorAll('.diff-preset-btn');
+    diffBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        diffBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.matchSettings.difficulty = btn.getAttribute('data-difficulty') || 'normal';
+      });
+    });
+
+    const sharkCountSlider = document.getElementById('lobby-shark-count-slider');
+    const sharkCountVal = document.getElementById('lobby-shark-count-val');
+    sharkCountSlider.addEventListener('input', (e) => {
+      const cnt = parseInt(e.target.value, 10) || 0;
+      this.matchSettings.sharkCount = cnt;
+      if (sharkCountVal) {
+        sharkCountVal.textContent = cnt === 0 ? '0 (No Sharks)' : `${cnt}`;
+      }
+    });
+
+    const sharkSpeedSlider = document.getElementById('lobby-shark-speed-slider');
+    const sharkSpeedVal = document.getElementById('lobby-shark-speed-val');
+    sharkSpeedSlider.addEventListener('input', (e) => {
+      const spd = parseFloat(e.target.value) || 1.0;
+      this.matchSettings.sharkSpeed = spd;
+      if (sharkSpeedVal) {
+        sharkSpeedVal.textContent = this._formatSharkSpeedLabel(spd);
+      }
     });
 
     // 1. Color Swatches
@@ -489,7 +652,8 @@ export class PreGameLobby {
           mode: this.roomConfig.mode,
           roomKey: activeRoomKey,
           fillWithBots
-        }
+        },
+        matchSettings: { ...this.matchSettings }
       });
     }
   }
@@ -506,7 +670,7 @@ export class PreGameLobby {
     // Simulate lively steering & flailing tentacles in the preview window
     this.previewOctopus.update(dt, elapsedTime, {
       turnRate: Math.cos(elapsedTime * 2.2) * 1.65,
-      speedRatio: 1.2,
+      speedRatio: this.matchSettings.gameSpeed,
       isBoost: Math.sin(elapsedTime * 1.5) > 0.55,
       isStunned: false
     });

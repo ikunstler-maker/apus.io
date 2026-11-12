@@ -23,8 +23,9 @@ export class BotContender extends Contender {
       borderEffectId: this.borderEffectId
     }, false);
 
-    // AI Personality traits
-    this.aggression = 0.35 + Math.random() * 0.55;
+    // AI Personality traits (scaled dynamically by CONFIG.DIFFICULTY)
+    this.baseAggression = 0.35 + Math.random() * 0.55;
+    this.aggression = this.baseAggression;
     this.maxVentureTime = 2.4 + Math.random() * 2.4;
     this.ventureTimer = 0;
     this.loopArcDirection = Math.random() < 0.5 ? 1 : -1;
@@ -40,11 +41,14 @@ export class BotContender extends Contender {
     this.ventureTimer = 0;
     this.aiState = 'EXPAND';
     this.loopArcDirection = Math.random() < 0.5 ? 1 : -1;
-    this.maxVentureTime = 2.3 + Math.random() * 2.5;
+    const diffPreset = CONFIG.DIFFICULTY_PRESETS[CONFIG.DIFFICULTY] || CONFIG.DIFFICULTY_PRESETS.normal;
+    this.aggression = THREE.MathUtils.clamp(this.baseAggression * (diffPreset.botAggression || 0.65) * 1.4, 0.15, 0.98);
+    this.maxVentureTime = (2.1 + Math.random() * 2.2) * (0.75 + this.aggression * 0.5);
   }
 
   /**
    * Evaluates spherical surroundings and sets `this.turnInput` in `[-1, 1]`.
+   * Scales AI aggression and responsiveness according to `CONFIG.DIFFICULTY`.
    * Also controls ghostly wandering & Boo! emotes while the bot is in the Ghost Realm!
    */
   updateAI(dt, allContenders, hazardsAndBonuses) {
@@ -59,19 +63,22 @@ export class BotContender extends Contender {
       return;
     }
 
+    const diffPreset = CONFIG.DIFFICULTY_PRESETS[CONFIG.DIFFICULTY] || CONFIG.DIFFICULTY_PRESETS.normal;
+    this.aggression = THREE.MathUtils.clamp(this.baseAggression * (diffPreset.botAggression || 0.65) * 1.4, 0.15, 0.98);
+
     if (!this.isOutside) {
       this.homeAnchorNormal.copy(this.normal);
       this.ventureTimer = 0;
       if (this.aiState === 'RETURN') {
         this.aiState = 'EXPAND';
         this.loopArcDirection = Math.random() < 0.5 ? 1 : -1;
-        this.maxVentureTime = 2.2 + Math.random() * 2.6;
+        this.maxVentureTime = (2.0 + Math.random() * 2.4) * (0.75 + this.aggression * 0.5);
       }
     } else {
       this.ventureTimer += dt;
     }
 
-    // 1. Check urgent obstacle avoidance ahead
+    // 1. Check gentle obstacle avoidance ahead
     const avoidSteer = this._computeObstacleAvoidance();
     if (Math.abs(avoidSteer) > 0.15) {
       this.turnInput = avoidSteer;
@@ -80,13 +87,14 @@ export class BotContender extends Contender {
 
     // 2. Return to base if trail gets long or threatened
     const threatened = this.isOutside && this._isTrailThreatened(allContenders, hazardsAndBonuses);
-    if (this.isOutside && (this.ventureTimer >= this.maxVentureTime || this.trailPoints.length > 34 || threatened)) {
+    const maxTrailLen = CONFIG.DIFFICULTY === 'easy' ? 24 : (CONFIG.DIFFICULTY === 'hard' ? 42 : 34);
+    if (this.isOutside && (this.ventureTimer >= this.maxVentureTime || this.trailPoints.length > maxTrailLen || threatened)) {
       this.aiState = 'RETURN';
     }
 
-    // 3. Look for nearby vulnerable enemy trails to sever (respecting Phantom Cloak!)
+    // 3. Look for nearby vulnerable enemy trails to sever (respecting Phantom Cloak & Difficulty!)
     let targetWorldPos = null;
-    if (!threatened && this.trailPoints.length < 18) {
+    if (!threatened && this.trailPoints.length < 18 && Math.random() < this.aggression) {
       const huntPoint = this._findVulnerableTrailTarget(allContenders);
       if (huntPoint) {
         this.aiState = 'HUNT';
@@ -197,7 +205,7 @@ export class BotContender extends Contender {
 
   _findVulnerableTrailTarget(allContenders) {
     let bestPt = null;
-    let bestDist = 28.0 * (0.6 + this.aggression * 0.6);
+    let bestDist = 30.0 * (0.45 + this.aggression * 0.75);
 
     for (let i = 0; i < allContenders.length; i++) {
       const other = allContenders[i];

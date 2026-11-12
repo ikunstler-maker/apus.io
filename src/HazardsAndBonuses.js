@@ -28,7 +28,7 @@ export class HazardsAndBonuses {
     this.whirlpools = []; // Linked pairs of non-lethal teleport vortexes
     this.sharks = [];     // Autonomous trail-cutting shark agents
     this.powerUps = [];   // Floating luminous power-up buoys
-    this.activeFX = [];   // Expanding sonar rings, shark shockwaves, anchor beams
+    this.activeFX = [];   // Expanding sonar rings, shark shockwaves, anchor beams, splat poofs
 
     this._initWhirlpools();
     this._initSharks();
@@ -80,7 +80,6 @@ export class HazardsAndBonuses {
       }
       if (safe) return candidate;
 
-      // Perturb slightly on unit sphere
       candidate.x += (Math.random() - 0.5) * 0.25;
       candidate.y += (Math.random() - 0.5) * 0.25;
       candidate.z += (Math.random() - 0.5) * 0.25;
@@ -92,7 +91,7 @@ export class HazardsAndBonuses {
   _createVortexMesh(normal, material, color, id) {
     const vortexRadius = 5.2;
     const group = new THREE.Group();
-    const pos = normal.clone().multiplyScalar(this.radius + 0.25);
+    const pos = normal.clone().multiplyScalar(this.radius + 0.28);
     group.position.copy(pos);
 
     const up = new THREE.Vector3(0, 0, 1);
@@ -130,13 +129,34 @@ export class HazardsAndBonuses {
   }
 
   // ==========================================================================
-  // 2. PATROLLING SHARKS (AUTONOMOUS TRAIL CUTTERS)
+  // 2. PATROLLING SHARKS (DYNAMIC COUNT 0..15 & SPEED 0.5x..2.0x)
   // ==========================================================================
   _initSharks() {
     this.sharkGroup = new THREE.Group();
     this.scene.add(this.sharkGroup);
+    this.syncSharkSettings(CONFIG.SHARK_COUNT, CONFIG.SHARK_SPEED_MULTIPLIER);
+  }
 
-    for (let i = 0; i < CONFIG.SHARK_COUNT; i++) {
+  /**
+   * Dynamically adjusts the number of active patrolling sharks (`0` to `15`) and their
+   * movement speed multiplier (`0.5x` to `2.0x`) from the Pre-Game Lobby settings.
+   */
+  syncSharkSettings(sharkCount = CONFIG.SHARK_COUNT, sharkSpeedMult = CONFIG.SHARK_SPEED_MULTIPLIER) {
+    const targetCount = THREE.MathUtils.clamp(Math.round(sharkCount), 0, 15);
+    CONFIG.SHARK_COUNT = targetCount;
+    CONFIG.SHARK_SPEED_MULTIPLIER = THREE.MathUtils.clamp(Number(sharkSpeedMult) || 1.0, 0.5, 2.0);
+
+    // Remove excess sharks if count was reduced
+    while (this.sharks.length > targetCount) {
+      const removed = this.sharks.pop();
+      if (removed && removed.mesh) {
+        this.sharkGroup.remove(removed.mesh);
+      }
+    }
+
+    // Add new sharks if count was increased
+    while (this.sharks.length < targetCount) {
+      const i = this.sharks.length;
       const normal = this.sphereWorld.findSafeSpawnNormal([], 14.0, 0);
       const ref = Math.abs(normal.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
       const heading = new THREE.Vector3().crossVectors(ref, normal).normalize();
@@ -149,8 +169,8 @@ export class HazardsAndBonuses {
         normal,
         heading,
         position: normal.clone().multiplyScalar(this.radius),
-        speed: CONFIG.BASE_SPEED * 0.88,
-        chaseSpeed: CONFIG.BASE_SPEED * 1.16,
+        baseSpeed: CONFIG.BASE_SPEED * 0.88,
+        baseChaseSpeed: CONFIG.BASE_SPEED * 1.16,
         patrolCurveSign: i % 2 === 0 ? 1 : -1,
         patrolTimer: Math.random() * 6.0,
         biteCooldown: 0,
@@ -161,56 +181,62 @@ export class HazardsAndBonuses {
   }
 
   /**
-   * Builds a stylized menacing dorsal fin, tail fin, and shadowy underwater shark silhouette.
+   * Builds a smooth clay-styled menacing dorsal fin, tail fin, and underwater shark silhouette.
    */
   _buildSharkMesh() {
     const group = new THREE.Group();
 
-    // Shadowy underwater body silhouette just beneath the surface
+    // Smooth underwater body silhouette just beneath the surface
     const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x0c1f33,
-      roughness: 0.6,
+      color: 0x16425b,
+      roughness: 0.45,
+      metalness: 0.05,
       transparent: true,
-      opacity: 0.72
+      opacity: 0.78,
+      flatShading: false
     });
-    const bodyGeo = new THREE.ConeGeometry(0.95, 4.4, 7);
+    const bodyGeo = new THREE.ConeGeometry(1.15, 4.8, 24);
     bodyGeo.rotateX(Math.PI / 2);
-    bodyGeo.scale(0.85, 0.42, 1.0);
+    bodyGeo.scale(0.88, 0.45, 1.0);
+    bodyGeo.computeVertexNormals();
     const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    bodyMesh.position.y = -0.15;
+    bodyMesh.position.y = -0.1;
     group.add(bodyMesh);
 
-    // Iconic curved dorsal fin slicing above the waves
+    // Smooth curved dorsal fin slicing above the waves
     const finMat = new THREE.MeshStandardMaterial({
-      color: 0x223344,
+      color: 0x2c497f,
       emissive: 0xff2a55,
-      emissiveIntensity: 0.25,
-      roughness: 0.4,
-      flatShading: true
+      emissiveIntensity: 0.28,
+      roughness: 0.35,
+      metalness: 0.05,
+      flatShading: false
     });
-    const dorsalGeo = new THREE.ConeGeometry(0.55, 1.85, 4);
-    dorsalGeo.scale(0.32, 1.0, 1.15);
+    const dorsalGeo = new THREE.ConeGeometry(0.68, 2.2, 20);
+    dorsalGeo.scale(0.36, 1.0, 1.2);
+    dorsalGeo.computeVertexNormals();
     const dorsalMesh = new THREE.Mesh(dorsalGeo, finMat);
-    dorsalMesh.position.set(0, 0.95, -0.1);
+    dorsalMesh.position.set(0, 1.08, -0.1);
     dorsalMesh.rotation.x = -0.28;
     dorsalMesh.castShadow = true;
     group.add(dorsalMesh);
 
     // Swept tail fin
-    const tailGeo = new THREE.ConeGeometry(0.38, 1.25, 4);
-    tailGeo.scale(0.25, 1.0, 0.85);
+    const tailGeo = new THREE.ConeGeometry(0.45, 1.45, 16);
+    tailGeo.scale(0.28, 1.0, 0.88);
+    tailGeo.computeVertexNormals();
     const tailMesh = new THREE.Mesh(tailGeo, finMat);
-    tailMesh.position.set(0, 0.6, -2.1);
+    tailMesh.position.set(0, 0.68, -2.25);
     tailMesh.rotation.x = -0.35;
     group.add(tailMesh);
 
-    // Subtle warning ripple ring around dorsal fin
-    const rippleGeo = new THREE.RingGeometry(0.9, 1.35, 20);
+    // Warning ripple ring around dorsal fin
+    const rippleGeo = new THREE.RingGeometry(1.05, 1.55, 28);
     rippleGeo.rotateX(-Math.PI / 2);
     const rippleMat = new THREE.MeshBasicMaterial({
       color: 0xff4d6d,
       transparent: true,
-      opacity: 0.45,
+      opacity: 0.52,
       side: THREE.DoubleSide,
       depthWrite: false
     });
@@ -243,21 +269,24 @@ export class HazardsAndBonuses {
     const coreMat = new THREE.MeshStandardMaterial({
       color: cfg.color,
       emissive: cfg.color,
-      emissiveIntensity: 0.85,
-      roughness: 0.15,
-      metalness: 0.2
+      emissiveIntensity: 0.75,
+      roughness: 0.22,
+      metalness: 0.1,
+      flatShading: false
     });
 
-    // Luminous floating crystal octahedron core
-    const coreGeo = new THREE.OctahedronGeometry(1.25, 0);
+    // Smooth glossy floating sphere/octahedron core
+    const coreGeo = new THREE.SphereGeometry(1.3, 24, 24);
+    coreGeo.computeVertexNormals();
     const coreMesh = new THREE.Mesh(coreGeo, coreMat);
-    coreMesh.position.y = 1.65;
+    coreMesh.position.y = 1.75;
     coreMesh.castShadow = true;
     group.add(coreMesh);
 
     // Orbiting energy halo ring
-    const ringGeo = new THREE.TorusGeometry(1.75, 0.14, 8, 24);
+    const ringGeo = new THREE.TorusGeometry(1.85, 0.16, 16, 32);
     ringGeo.rotateX(Math.PI / 2);
+    ringGeo.computeVertexNormals();
     const ringMat = new THREE.MeshBasicMaterial({
       color: cfg.color,
       transparent: true,
@@ -265,22 +294,22 @@ export class HazardsAndBonuses {
       blending: THREE.AdditiveBlending
     });
     const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    ringMesh.position.y = 1.1;
+    ringMesh.position.y = 1.15;
     group.add(ringMesh);
 
     // Base water glow disc
-    const baseGeo = new THREE.RingGeometry(0.6, 2.2, 24);
+    const baseGeo = new THREE.RingGeometry(0.65, 2.35, 28);
     baseGeo.rotateX(-Math.PI / 2);
     const baseMat = new THREE.MeshBasicMaterial({
       color: cfg.color,
       transparent: true,
-      opacity: 0.4,
+      opacity: 0.45,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
       depthWrite: false
     });
     const baseMesh = new THREE.Mesh(baseGeo, baseMat);
-    baseMesh.position.y = 0.25;
+    baseMesh.position.y = 0.28;
     group.add(baseMesh);
 
     this.buoyGroup.add(group);
@@ -325,7 +354,7 @@ export class HazardsAndBonuses {
   }
 
   // ==========================================================================
-  // 4. EXPANDING SHOCKWAVES, REPULSOR PULSES & ANCHOR TETHER FX
+  // 4. EXPANDING SHOCKWAVES, SPLAT POOFS, REPULSOR PULSES & ANCHOR TETHER FX
   // ==========================================================================
   spawnShockwaveRing(normal, colorHex = 0x5ce1e6, maxRadius = 26.0, duration = 1.1) {
     const group = new THREE.Group();
@@ -356,6 +385,53 @@ export class HazardsAndBonuses {
     });
   }
 
+  /**
+   * Spawns a comical "Splat / Poof!" cartoon ink & ectoplasm burst when a contender enters Ghost mode.
+   */
+  spawnSplatPoofFX(normal, colorHex = 0xff5964) {
+    const group = new THREE.Group();
+    group.position.copy(normal).multiplyScalar(this.radius + 0.8);
+    const up = new THREE.Vector3(0, 1, 0);
+    group.quaternion.setFromUnitVectors(up, normal);
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: colorHex,
+      emissive: colorHex,
+      emissiveIntensity: 0.35,
+      roughness: 0.3,
+      transparent: true,
+      opacity: 0.95,
+      flatShading: false
+    });
+
+    const puffs = [];
+    const puffGeo = new THREE.SphereGeometry(0.65, 16, 16);
+    puffGeo.computeVertexNormals();
+
+    for (let i = 0; i < 12; i++) {
+      const mesh = new THREE.Mesh(puffGeo, mat);
+      const angle = (i / 12) * Math.PI * 2 + Math.random() * 0.3;
+      const speed = 3.5 + Math.random() * 4.5;
+      puffs.push({
+        mesh,
+        vx: Math.cos(angle) * speed,
+        vy: 3.5 + Math.random() * 4.5,
+        vz: Math.sin(angle) * speed
+      });
+      group.add(mesh);
+    }
+
+    this.scene.add(group);
+    this.activeFX.push({
+      kind: 'SPLAT_POOF',
+      group,
+      mat,
+      puffs,
+      age: 0,
+      duration: 0.85
+    });
+  }
+
   spawnAnchorTetherFX(fromPos, toPos, colorHex = 0x4dff91) {
     const points = [];
     const steps = 20;
@@ -367,7 +443,8 @@ export class HazardsAndBonuses {
       points.push(p);
     }
     const curve = new THREE.CatmullRomCurve3(points);
-    const geo = new THREE.TubeGeometry(curve, 20, 0.45, 6, false);
+    const geo = new THREE.TubeGeometry(curve, 20, 0.45, 8, false);
+    geo.computeVertexNormals();
     const mat = new THREE.MeshBasicMaterial({
       color: colorHex,
       transparent: true,
@@ -428,7 +505,6 @@ export class HazardsAndBonuses {
           axis.normalize();
           shark.normal.applyAxisAngle(axis, strength).normalize();
           shark.position.copy(shark.normal).multiplyScalar(this.radius);
-          // Turn shark away from source contender
           const awayTangent = new THREE.Vector3()
             .subVectors(shark.position, sourceContender.position)
             .sub(shark.normal.clone().multiplyScalar(shark.position.dot(shark.normal)))
@@ -446,7 +522,7 @@ export class HazardsAndBonuses {
   // 5. MAIN UPDATE LOOP FOR WHIRLPOOLS, SHARKS, BUOYS & FX
   // ==========================================================================
   update(dt, elapsedTime, allContenders, callbacks = {}) {
-    const { onWhirlpoolTeleport, onSharkBite, onPowerUpCollected, onLoopClosed, onEliminated } = callbacks;
+    const { onWhirlpoolTeleport, onSharkBite, onPowerUpCollected, onLoopClosed } = callbacks;
 
     // 1. Update Whirlpools & check contender entry
     for (let i = 0; i < this.whirlpools.length; i++) {
@@ -459,19 +535,19 @@ export class HazardsAndBonuses {
 
         const arcDist = contender.normal.angleTo(wp.normal) * this.radius;
         if (arcDist < wp.radius) {
-          // Non-lethal teleport & active trail sever!
+          // Non-lethal teleport & active trail sever (ownedCells untouched!)
           contender.clearTrail();
+          this.territoryGrid.ensureContenderHasBase(contender);
 
           const exitWp = wp.linkedPartner;
-          // Place contender just outside the exit whirlpool rim along their current heading projection
-          const exitOffsetAngle = (exitWp.radius + 3.8) / this.radius;
+          const exitOffsetAngle = (exitWp.radius + 4.2) / this.radius;
           const ref = Math.abs(exitWp.normal.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
           const exitBinormal = new THREE.Vector3().crossVectors(ref, exitWp.normal).normalize();
 
           contender.normal.copy(exitWp.normal).applyAxisAngle(exitBinormal, exitOffsetAngle).normalize();
           contender.position.copy(contender.normal).multiplyScalar(this.radius);
           contender.heading.crossVectors(exitBinormal, contender.normal).normalize();
-          contender.spawnImmunityTimer = CONFIG.WHIRLPOOL_IMMUNITY_DURATION; // 1.5s immunity!
+          contender.spawnImmunityTimer = CONFIG.WHIRLPOOL_IMMUNITY_DURATION;
 
           this.spawnShockwaveRing(wp.normal, 0x00f5d4, 14.0, 0.7);
           this.spawnShockwaveRing(exitWp.normal, 0x00f5d4, 16.0, 0.8);
@@ -484,9 +560,12 @@ export class HazardsAndBonuses {
     }
 
     // 2. Update Autonomous Patrolling Sharks
-    this._updateSharks(dt, elapsedTime, allContenders, onSharkBite, onEliminated);
+    this._updateSharks(dt, elapsedTime, allContenders, onSharkBite);
 
     // 3. Update Floating Power-Up Buoys & check collection
+    const diffPreset = CONFIG.DIFFICULTY_PRESETS[CONFIG.DIFFICULTY] || CONFIG.DIFFICULTY_PRESETS.normal;
+    const respawnMult = diffPreset.powerUpRespawnMult || 1.0;
+
     for (let i = 0; i < this.powerUps.length; i++) {
       const buoy = this.powerUps[i];
       if (!buoy.active) {
@@ -501,7 +580,7 @@ export class HazardsAndBonuses {
       // Bob and spin luminous crystal buoy
       buoy.coreMesh.rotation.y = elapsedTime * 2.2 + buoy.index;
       buoy.coreMesh.rotation.x = Math.sin(elapsedTime * 1.6 + buoy.index) * 0.35;
-      buoy.coreMesh.position.y = 1.65 + Math.sin(elapsedTime * 3.0 + buoy.index) * 0.32;
+      buoy.coreMesh.position.y = 1.75 + Math.sin(elapsedTime * 3.0 + buoy.index) * 0.32;
       buoy.ringMesh.rotation.z = -elapsedTime * 1.8;
 
       // Check contender collection
@@ -509,11 +588,11 @@ export class HazardsAndBonuses {
         const contender = allContenders[c];
         if (contender.isEliminated) continue;
 
-        if (contender.position.distanceTo(buoy.position) < 3.4) {
+        if (contender.position.distanceTo(buoy.position) < 3.8) {
           const collectedType = buoy.type;
           buoy.active = false;
           buoy.mesh.visible = false;
-          buoy.respawnTimer = CONFIG.POWERUP_RESPAWN_TIME;
+          buoy.respawnTimer = CONFIG.POWERUP_RESPAWN_TIME * respawnMult;
 
           const res = contender.applyPowerUp(collectedType, onLoopClosed);
 
@@ -568,11 +647,17 @@ export class HazardsAndBonuses {
 
   /**
    * Updates autonomous trail-cutting sharks:
-   * - Cruisers patrol along curved spherical paths.
-   * - Ignore contenders inside safe territory and ignore contenders with Phantom Cloak (`SEMI_TRANSPARENCY`).
-   * - Veer aggressively toward nearby exposed trails and bite/sever them on contact!
+   * - Scales speed by `CONFIG.SHARK_SPEED_MULTIPLIER` and `CONFIG.GAME_SPEED_MULTIPLIER`.
+   * - CRITICAL BUGFIX: When a shark intersects a contender's active trail:
+   *   - ONLY clears `activeTrailCells` and the 3D trail ribbon mesh (`contender.handleSharkTrailSnap()`).
+   *   - NEVER clears, resets, or modifies `contender.ownedCells`!
+   *   - Snaps the contender back onto the nearest valid cell of their existing `ownedCells`.
    */
-  _updateSharks(dt, elapsedTime, allContenders, onSharkBite, onEliminated) {
+  _updateSharks(dt, elapsedTime, allContenders, onSharkBite) {
+    const sharkSpeedMult = (CONFIG.SHARK_SPEED_MULTIPLIER || 1.0) * (CONFIG.GAME_SPEED_MULTIPLIER || 1.0);
+    const diffPreset = CONFIG.DIFFICULTY_PRESETS[CONFIG.DIFFICULTY] || CONFIG.DIFFICULTY_PRESETS.normal;
+    const chaseMult = diffPreset.sharkChaseMult || 1.0;
+
     for (let s = 0; s < this.sharks.length; s++) {
       const shark = this.sharks[s];
       if (shark.biteCooldown > 0) {
@@ -581,8 +666,7 @@ export class HazardsAndBonuses {
 
       shark.patrolTimer += dt;
       let targetTrailPoint = null;
-      let targetContender = null;
-      let bestDist = 30.0; // Shark detection range
+      let bestDist = 30.0 * chaseMult; // Shark detection range
 
       if (shark.biteCooldown <= 0) {
         for (let c = 0; c < allContenders.length; c++) {
@@ -599,7 +683,6 @@ export class HazardsAndBonuses {
             if (d < bestDist) {
               bestDist = d;
               targetTrailPoint = pt;
-              targetContender = contender;
             }
           }
         }
@@ -619,7 +702,6 @@ export class HazardsAndBonuses {
         }
       } else {
         shark.isChasing = false;
-        // Curved figure-8 / sinusoidal spherical patrol path
         turnRate = Math.sin(shark.patrolTimer * 0.75 + shark.id) * 0.65 * shark.patrolCurveSign;
       }
 
@@ -637,7 +719,7 @@ export class HazardsAndBonuses {
 
       // Advance shark along sphere tangent
       shark.heading.applyAxisAngle(shark.normal, turnRate * dt);
-      const speed = shark.isChasing ? shark.chaseSpeed : shark.speed;
+      const speed = (shark.isChasing ? shark.baseChaseSpeed * chaseMult : shark.baseSpeed) * sharkSpeedMult;
       const binormal = new THREE.Vector3().crossVectors(shark.normal, shark.heading).normalize();
       const stepAngle = (speed * dt) / this.radius;
 
@@ -662,7 +744,7 @@ export class HazardsAndBonuses {
 
           let bitten = false;
           for (let p = 0; p < contender.trailPoints.length; p++) {
-            if (shark.position.distanceTo(contender.trailPoints[p]) < 2.35) {
+            if (shark.position.distanceTo(contender.trailPoints[p]) < 2.65) {
               bitten = true;
               break;
             }
@@ -673,17 +755,12 @@ export class HazardsAndBonuses {
             this.spawnShockwaveRing(shark.normal, 0xff2a55, 16.0, 0.75);
             this.spawnShockwaveRing(contender.normal, 0xffbe0b, 12.0, 0.65);
 
-            if (CONFIG.SHARK_LETHAL_BITE) {
-              if (onEliminated) {
-                onEliminated(contender, null, 'Bitten by a Patrolling Shark');
-              }
-            } else {
-              // Non-lethal bite: snaps active trail and sends a shockwave that stuns contender for 0.8s!
-              contender.clearTrail();
-              contender.stunTimer = CONFIG.SHARK_STUN_DURATION;
-              if (onSharkBite) {
-                onSharkBite(contender, shark);
-              }
+            // CRITICAL BUGFIX: ONLY sever activeTrailCells & snap contender back to their nearest ownedCells!
+            // NEVER clear or modify contender.ownedCells!
+            contender.handleSharkTrailSnap();
+
+            if (onSharkBite) {
+              onSharkBite(contender, shark);
             }
             break;
           }

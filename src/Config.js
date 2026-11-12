@@ -1,5 +1,5 @@
 // ============================================================================
-// APUS.IO — CORE CONFIGURATION, CUSTOMIZATION CATALOGS & GAMEPLAY CONSTANTS
+// APUS.IO — CORE CONFIGURATION, MATCH SETTINGS & CUSTOMIZATION CATALOGS
 // ============================================================================
 
 export const CONFIG = {
@@ -7,52 +7,87 @@ export const CONFIG = {
   SPHERE_RADIUS: 100,
   SUBDIVISION_DETAIL: 27, // Icosahedron subdivision: 20 * (27+1)^2 = 15,680 geodesic cells
 
-  // Gameplay Rules & Toggles (Requested Configurable Flags)
+  // Gameplay Rules & Toggles
   ALLOW_SELF_CROSS: false,        // Crossing one's own active trail severs it and triggers elimination
-  STRICT_OBSTACLE_CRASH: false,   // false = smooth sliding deflection along obstacle perimeter; true = breaks active trail / eliminates
-  SHARK_LETHAL_BITE: false,       // false = destroys active trail + 0.8s shockwave stun without eliminating base; true = full elimination
+  STRICT_OBSTACLE_CRASH: false,   // Solid obstacles NEVER kill or break trails (always smooth sliding collision)
+  SHARK_LETHAL_BITE: false,       // Shark bites ONLY snap active trail & never wipe owned territory
   DOMINATION_TARGET: 35.0,        // 35% of navigable sphere surface triggers Victory Celebration
+
+  // Match & Hazard Settings (Configurable in Pre-Game Lobby & Settings Modal)
+  GAME_SPEED_MULTIPLIER: 1.0,     // 0.5x (Chill) -> 1.0x (Normal) -> 1.5x (Fast) -> 2.0x (Turbo)
+  DIFFICULTY: 'normal',           // 'easy' | 'normal' | 'hard'
+  SHARK_COUNT: 5,                 // Slider from 0 to 15 patrolling sharks (default: 5)
+  SHARK_SPEED_MULTIPLIER: 1.0,    // Slider from 0.5x (Lazy) to 2.0x (Frenzy)
 
   // Contenders & Movement
   MAX_PLAYERS: 10,                // Total contenders in a full room (1 Local + up to 9 Bots/Peers)
   BOT_COUNT: 9,                   // Default AI competitors
-  BASE_SPEED: 22.0,               // Units per second along sphere surface
+  BASE_SPEED: 20.0,               // Base units per second along sphere surface (scaled by GAME_SPEED_MULTIPLIER)
   GHOST_SPEED_MULTIPLIER: 1.35,   // Ghosts glide freely at +35% base speed
   GHOST_FLOAT_OFFSET: 2.5,        // Ghosts float 2.5 units above the water surface
-  TURN_SPEED: 2.65,               // Max angular steering velocity (rad/s in tangent plane)
-  STARTER_ZONE_RADIUS: 8.2,       // Initial circular territory radius on spawn
+  TURN_SPEED: 2.75,               // Max angular steering velocity (rad/s in tangent plane)
+  STARTER_ZONE_RADIUS: 8.5,       // Initial circular territory radius on spawn (~4+ cells radius)
   SPAWN_IMMUNITY_DURATION: 2.0,   // Seconds of immunity after fresh spawn
   WHIRLPOOL_IMMUNITY_DURATION: 1.5, // 1.5s immunity after teleporting through a whirlpool
-  SHARK_STUN_DURATION: 0.8,       // 0.8s stun when a shark bites an active trail (if SHARK_LETHAL_BITE === false)
+  SHARK_STUN_DURATION: 0.65,      // Brief stun when a shark snaps an active trail
 
-  // Trail & Capture
-  TRAIL_SAMPLE_DISTANCE: 0.9,     // Arc distance between trail ribbon nodes
-  NORMAL_TRAIL_WIDTH: 1.35,       // Standard ribbon width
-  BROAD_BRUSH_MULTIPLIER: 3.0,    // Triples trail width during Wide Wake power-up
-  TRAIL_HIT_RADIUS: 1.55,         // Collision radius for severing an active trail
+  // Avatar & Trail Visual Scale (Sunny Claymorphism Overhaul)
+  OCTOPUS_SCALE: 1.8,             // 1.8x big derpy chibi octopus scale
+  NAMEPLATE_HEIGHT_OFFSET: 7.8,   // Raised +3.5 units higher so UI labels NEVER cover headgear
+  TRAIL_SAMPLE_DISTANCE: 0.75,    // Arc distance between trail ribbon nodes
+  NORMAL_TRAIL_WIDTH: 2.65,       // 3.5x wider active trail ribbon with bright neon core
+  BROAD_BRUSH_MULTIPLIER: 2.4,    // Extra wide corridor during Wide Wake power-up
+  TRAIL_HIT_RADIUS: 1.75,         // Collision radius for severing an active trail
 
-  // Camera (Isometric Spherical Perspective)
-  CAMERA_FOV: 32,                 // Narrow FOV (30–35 deg) for orthographic-like isometric feel
-  CAMERA_TILT_DEG: 48,            // Polar tilt angle (45–55 deg)
-  CAMERA_DISTANCE: 92,            // Orbit distance from player on sphere
-  CAMERA_SMOOTHNESS: 7.5,         // Damping factor for camera orbit follow
+  // Camera Framing (Fill 95-100% of Screen with Ocean)
+  CAMERA_FOV: 28,                 // Narrow isometric FOV = 28 deg
+  CAMERA_ELEVATION_DEG: 58,       // Elevation angle ~58 deg above local tangent plane (32 deg from normal)
+  CAMERA_DISTANCE: 42,            // Close orbit distance (42 units) so turquoise ocean fills 95-100% of screen
+  CAMERA_SMOOTHNESS: 8.0,         // Smooth damping factor for camera orbit follow
 
   // World Obstacles
-  CLIFF_COUNT: 14,
-  TREE_ISLAND_COUNT: 12,
-  CORAL_REEF_COUNT: 16,
+  CLIFF_COUNT: 12,
+  TREE_ISLAND_COUNT: 14,
+  CORAL_REEF_COUNT: 14,
 
   // Dynamic Hazards & Power-Ups
   WHIRLPOOL_PAIR_COUNT: 3,        // 3 pairs = 6 linked vortexes on opposite hemispheres
-  SHARK_COUNT: 7,                 // Autonomous trail-cutting sharks
   MAX_POWERUPS: 18,               // Luminous floating buoys across the sphere
-  POWERUP_RESPAWN_TIME: 7.0,
+  POWERUP_RESPAWN_TIME: 6.5,
+
+  // Difficulty Presets Lookup
+  DIFFICULTY_PRESETS: {
+    easy: {
+      id: 'easy',
+      name: 'Easy (Cozy Reef)',
+      botAggressionMult: 0.45,
+      botTurnMult: 0.78,
+      powerUpRespawnMult: 0.65,
+      whirlpoolPull: 0.6
+    },
+    normal: {
+      id: 'normal',
+      name: 'Normal (Balanced Ocean)',
+      botAggressionMult: 1.0,
+      botTurnMult: 1.0,
+      powerUpRespawnMult: 1.0,
+      whirlpoolPull: 1.0
+    },
+    hard: {
+      id: 'hard',
+      name: 'Hard (Apex Chaos)',
+      botAggressionMult: 1.65,
+      botTurnMult: 1.25,
+      powerUpRespawnMult: 1.15,
+      whirlpoolPull: 1.5
+    }
+  },
 
   // Power-Up Durations & Multipliers
   POWERUPS: {
     SPEED_BOOST: {
       id: 'SPEED_BOOST',
-      name: 'Speed Surge',
+      name: 'Jet Ink Surge',
       subtitle: '+45% Speed & Golden Wake',
       duration: 6.0,
       speedMultiplier: 1.45,
@@ -65,7 +100,7 @@ export const CONFIG = {
       name: 'Phantom Cloak',
       subtitle: '80% Stealth vs Sharks & Bots',
       duration: 7.0,
-      opacity: 0.2,
+      opacity: 0.25,
       color: 0x70f3ff,
       hex: '#70f3ff',
       icon: '👻'
@@ -82,9 +117,9 @@ export const CONFIG = {
     BROAD_BRUSH: {
       id: 'BROAD_BRUSH',
       name: 'Wide Wake',
-      subtitle: '3x Trail Corridor Width',
+      subtitle: 'Mega Trail Corridor Width',
       duration: 8.0,
-      widthMultiplier: 3.0,
+      widthMultiplier: 2.4,
       color: 0xff66cc,
       hex: '#ff66cc',
       icon: '🌊'
@@ -102,20 +137,20 @@ export const CONFIG = {
     }
   },
 
-  // 1. 12 High-Contrast Vibrant & Pastel Paint Colors
+  // 1. 12 High-Contrast Vibrant & Pastel Claymorphism Paint Colors
   CONTENDER_PALETTE: [
-    { id: 'seafoam',   name: 'Electric Seafoam', color: 0x00f5d4, hex: '#00f5d4', emissive: 0x00a896 },
-    { id: 'crimson',   name: 'Coral Crimson',    color: 0xff3864, hex: '#ff3864', emissive: 0xb81d41 },
-    { id: 'sunburst',  name: 'Sunburst Amber',   color: 0xffbe0b, hex: '#ffbe0b', emissive: 0xc99300 },
-    { id: 'violet',    name: 'Abyssal Violet',   color: 0x9b5de5, hex: '#9b5de5', emissive: 0x6229b5 },
-    { id: 'azure',     name: 'Azure Surge',      color: 0x3a86ff, hex: '#3a86ff', emissive: 0x1b56bd },
-    { id: 'magenta',   name: 'Bubblegum Pop',    color: 0xff4791, hex: '#ff4791', emissive: 0xb31b59 },
-    { id: 'mint',      name: 'Pastel Mint',      color: 0x64dfdf, hex: '#64dfdf', emissive: 0x289696 },
-    { id: 'tangerine', name: 'Tangy Sherbet',    color: 0xfb5607, hex: '#fb5607', emissive: 0xb83b00 },
-    { id: 'peach',     name: 'Pastel Peach',     color: 0xff9ebb, hex: '#ff9ebb', emissive: 0xc45b7a },
-    { id: 'lavender',  name: 'Dreamy Lilac',     color: 0xc77dff, hex: '#c77dff', emissive: 0x853ec2 },
-    { id: 'lime',      name: 'Radioactive Kelp', color: 0xaacc00, hex: '#aacc00', emissive: 0x738a00 },
-    { id: 'lemon',     name: 'Banana Custard',   color: 0xffee70, hex: '#ffee70', emissive: 0xb8a425 }
+    { id: 'coral_pink', name: 'Coral Flamingo',   color: 0xff5c8a, hex: '#ff5c8a', emissive: 0xc92a5b },
+    { id: 'violet',     name: 'Grape Jelly',      color: 0x9b5de5, hex: '#9b5de5', emissive: 0x6229b5 },
+    { id: 'lime',       name: 'Key Lime Splash',  color: 0x8ac926, hex: '#8ac926', emissive: 0x588a0c },
+    { id: 'seafoam',    name: 'Electric Seafoam', color: 0x00f5d4, hex: '#00f5d4', emissive: 0x00a896 },
+    { id: 'sunburst',   name: 'Mango Sorbet',     color: 0xffbe0b, hex: '#ffbe0b', emissive: 0xc99300 },
+    { id: 'magenta',    name: 'Bubblegum Pop',    color: 0xf15bb5, hex: '#f15bb5', emissive: 0xb31b79 },
+    { id: 'azure',      name: 'Lagoon Blue',      color: 0x00bbf9, hex: '#00bbf9', emissive: 0x0077b6 },
+    { id: 'tangerine',  name: 'Tangerine Clay',   color: 0xfb5607, hex: '#fb5607', emissive: 0xb83b00 },
+    { id: 'mint',       name: 'Pastel Mint',      color: 0x64dfdf, hex: '#64dfdf', emissive: 0x289696 },
+    { id: 'lavender',   name: 'Dreamy Lilac',     color: 0xc77dff, hex: '#c77dff', emissive: 0x853ec2 },
+    { id: 'crimson',    name: 'Ruby Starfish',    color: 0xff3864, hex: '#ff3864', emissive: 0xb81d41 },
+    { id: 'lemon',      name: 'Banana Custard',   color: 0xffee70, hex: '#ffee70', emissive: 0xb8a425 }
   ],
 
   // 2. 6 Selectable Goofy Figurines / Headgear
@@ -160,7 +195,7 @@ export const CONFIG = {
 
   // 3. 6 Surface Paint Patterns (mapped to integer index 0..5 for GLSL shader)
   PATTERNS: [
-    { id: 'solid_gloss',    index: 0, name: 'Solid Gloss',    icon: '💧', desc: 'Smooth glossy paint' },
+    { id: 'solid_gloss',    index: 0, name: 'Solid Gloss',    icon: '💧', desc: 'Smooth glossy clay paint' },
     { id: 'messy_splatter', index: 1, name: 'Messy Splatter', icon: '🎨', desc: 'Comic paint splotches & drips' },
     { id: 'bubble_polka',   index: 2, name: 'Bubble Polka',   icon: '🫧', desc: 'Floating polka-dot bubbles' },
     { id: 'dizzy_swirls',   index: 3, name: 'Dizzy Swirls',   icon: '🌀', desc: 'Wobbly hypnotic spirals' },
@@ -180,6 +215,8 @@ export const CONFIG = {
   DERPY_NICKNAMES: [
     'Sir Flops-a-Lot',
     'NoodleBrain',
+    'Octo-Pete',
+    'DerpyMcDerp',
     'SoggySquid',
     'Captain Tangled',
     'Derp Tentacle',
@@ -195,9 +232,7 @@ export const CONFIG = {
     'ColanderKnight',
     'RubberDuckHead',
     'ConeWizard',
-    'PropellerPulp',
-    'SplatMaster',
-    'BarnacleBrain'
+    'PropellerPulp'
   ]
 };
 

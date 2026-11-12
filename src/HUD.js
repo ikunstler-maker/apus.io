@@ -10,7 +10,7 @@ export class HUD {
    * @param {import('./TerritoryGrid.js').TerritoryGrid} territoryGrid
    * @param {import('./SphereWorld.js').SphereWorld} sphereWorld
    * @param {import('./HazardsAndBonuses.js').HazardsAndBonuses} hazardsAndBonuses
-   * @param {Object} callbacks { onRespawnRequest, onOpenCustomizeRequest, onResetMatchRequest }
+   * @param {Object} callbacks { onRespawnRequest, onResetUnstuckRequest, onOpenCustomizeRequest, onResetMatchRequest }
    */
   constructor(player, territoryGrid, sphereWorld, hazardsAndBonuses, callbacks = {}) {
     this.player = player;
@@ -47,19 +47,34 @@ export class HUD {
     }
 
     this.root.innerHTML = `
+      <!-- Warm Diagonal Golden Sunbeam Overlay (God Rays from Top-Left) -->
+      <div class="hud-sunbeams-overlay" aria-hidden="true"></div>
+
       <!-- Floating 3D-to-HTML Nameplates Layer -->
       <div class="hud-nameplates-layer" id="hud-nameplates-layer"></div>
 
-      <!-- Top-Left Brand, Room Key, Ghost Counter & Local Player Telemetry -->
+      <!-- Top-Left Brand, Room Key, Emergency Reset/Unstuck [R] & Local Player Telemetry -->
       <header class="hud-panel hud-brand-panel" id="hud-telemetry-panel">
         <div class="brand-row">
           <div class="brand-badge">🐙</div>
           <div class="brand-title-col">
             <h1 class="brand-title">APUS<span>.IO</span></h1>
-            <p class="brand-subtitle">Derpy Spherical Octopus Arena</p>
+            <p class="brand-subtitle">Sunny Spherical Octopus Arena</p>
           </div>
-          <button type="button" class="hud-mini-lobby-btn" id="hud-open-lobby-btn" title="Customize Loadout & Room [C]">
+          <button type="button" class="hud-mini-lobby-btn" id="hud-open-lobby-btn" title="Customize Loadout, Speed & Sharks [C]">
             🎨 Loadout
+          </button>
+        </div>
+
+        <!-- Always-Accessible Emergency Reset / Unstuck [R] Button -->
+        <div class="hud-action-utility-row">
+          <button
+            type="button"
+            class="hud-unstuck-reset-btn"
+            id="hud-reset-unstuck-btn"
+            title="Immediately reset your current run and respawn at a safe ocean spot with a fresh starter island (Shortcut: R)"
+          >
+            🔄 Reset / Unstuck <kbd>[R]</kbd>
           </button>
         </div>
 
@@ -109,14 +124,6 @@ export class HUD {
               <span>Allow Self-Trail Cross</span>
             </label>
             <label class="rule-toggle">
-              <input type="checkbox" id="toggle-strict-crash" ${CONFIG.STRICT_OBSTACLE_CRASH ? 'checked' : ''} />
-              <span>Strict Obstacle Crash</span>
-            </label>
-            <label class="rule-toggle">
-              <input type="checkbox" id="toggle-shark-lethal" ${CONFIG.SHARK_LETHAL_BITE ? 'checked' : ''} />
-              <span>Lethal Shark Bites</span>
-            </label>
-            <label class="rule-toggle">
               <input type="checkbox" id="toggle-sound-fx" checked />
               <span>Synthesizer Audio FX</span>
             </label>
@@ -141,7 +148,7 @@ export class HUD {
         <div class="powerup-timers-list" id="hud-powerups-list"></div>
         <div class="hud-panel controls-hint-card">
           <div class="controls-row">
-            <kbd>Mouse</kbd> <span>or</span> <kbd>WASD</kbd> / <kbd>Arrows</kbd> <span>Steer Octopus</span>
+            <kbd>Mouse</kbd> <span>or</span> <kbd>WASD</kbd> / <kbd>Arrows</kbd> <span>Steer</span> • <kbd>R</kbd> <span>Unstuck</span>
           </div>
           <div class="controls-sub">Close loops into your zone to flood-fill the ocean. Cut enemy trails!</div>
         </div>
@@ -220,6 +227,7 @@ export class HUD {
     this.elGhostRespawnBtn = document.getElementById('hud-ghost-respawn-btn');
     this.elGhostCustomizeBtn = document.getElementById('hud-ghost-customize-btn');
     this.elOpenLobbyBtn = document.getElementById('hud-open-lobby-btn');
+    this.elResetUnstuckBtn = document.getElementById('hud-reset-unstuck-btn');
 
     this.elVictoryModal = document.getElementById('hud-victory-modal');
     this.elVictoryTitle = document.getElementById('victory-modal-title');
@@ -241,6 +249,20 @@ export class HUD {
       this.showToast(`📋 Copied Room Key: ${this.currentRoomKey}`, '#70f3ff');
       setTimeout(() => { this.elCopyHint.textContent = '📋'; }, 1600);
     });
+
+    // Always-accessible Emergency "🔄 Reset / Unstuck [R]" button
+    const triggerResetUnstuck = () => {
+      this.hideGhostBanner();
+      if (this.callbacks.onResetUnstuckRequest) {
+        this.callbacks.onResetUnstuckRequest();
+      } else if (this.callbacks.onRespawnRequest) {
+        this.callbacks.onRespawnRequest();
+      }
+    };
+
+    if (this.elResetUnstuckBtn) {
+      this.elResetUnstuckBtn.addEventListener('click', triggerResetUnstuck);
+    }
 
     // Ghost Realm Banner Buttons: Respawn Now [Space] & Customize Loadout [C]
     this.elGhostRespawnBtn.addEventListener('click', () => {
@@ -265,7 +287,10 @@ export class HUD {
         return;
       }
 
-      if (e.code === 'Space' && this.player.state === 'GHOST') {
+      if (e.code === 'KeyR') {
+        e.preventDefault();
+        triggerResetUnstuck();
+      } else if (e.code === 'Space' && this.player.state === 'GHOST') {
         e.preventDefault();
         this.elGhostRespawnBtn.click();
       } else if (e.code === 'KeyC') {
@@ -291,16 +316,6 @@ export class HUD {
     document.getElementById('toggle-self-cross').addEventListener('change', (e) => {
       CONFIG.ALLOW_SELF_CROSS = e.target.checked;
       this.showToast(`Self-Trail Cross: ${CONFIG.ALLOW_SELF_CROSS ? 'Allowed' : 'Lethal'}`, '#70f3ff');
-    });
-
-    document.getElementById('toggle-strict-crash').addEventListener('change', (e) => {
-      CONFIG.STRICT_OBSTACLE_CRASH = e.target.checked;
-      this.showToast(`Obstacle Collision: ${CONFIG.STRICT_OBSTACLE_CRASH ? 'Strict Crash' : 'Smooth Slide'}`, '#ffd147');
-    });
-
-    document.getElementById('toggle-shark-lethal').addEventListener('change', (e) => {
-      CONFIG.SHARK_LETHAL_BITE = e.target.checked;
-      this.showToast(`Shark Bite Mode: ${CONFIG.SHARK_LETHAL_BITE ? 'Full Elimination' : 'Trail Snap + 0.8s Stun'}`, '#ff4d6d');
     });
 
     document.getElementById('toggle-sound-fx').addEventListener('change', (e) => {
@@ -480,7 +495,7 @@ export class HUD {
    * Main HUD update:
    * 1. Updates Ghost Haunting counter & Player telemetry
    * 2. Sorts and renders Top 6 Live Nickname Leaderboard (+ local player row if outside Top 6)
-   * 3. Projects floating 3D-to-HTML Nameplates above every visible Octopus head
+   * 3. Projects floating 3D-to-HTML Nameplates above every visible 1.8x Octopus head
    * 4. Updates Active Power-Up Timers & 3D Globe Radar
    */
   update(allContenders, camera) {
@@ -518,7 +533,7 @@ export class HUD {
     } else {
       this.elGhostBanner.classList.add('hidden');
       if (this.player.stunTimer > 0) {
-        this.elStatusPill.textContent = '🦈 SHARK STUN';
+        this.elStatusPill.textContent = '🦈 SNAPPED TO BASE';
         this.elStatusPill.className = 'status-pill danger';
       } else if (this.player.spawnImmunityTimer > 0) {
         this.elStatusPill.textContent = `🛡️ IMMUNE (${this.player.spawnImmunityTimer.toFixed(1)}s)`;
@@ -697,16 +712,16 @@ export class HUD {
     ctx.clearRect(0, 0, w, h);
 
     const grad = ctx.createRadialGradient(cx - globeR * 0.28, cy - globeR * 0.28, globeR * 0.1, cx, cy, globeR);
-    grad.addColorStop(0, '#148899');
-    grad.addColorStop(0.65, '#073b61');
-    grad.addColorStop(1, '#03192e');
+    grad.addColorStop(0, '#48cae4');
+    grad.addColorStop(0.55, '#00b4d8');
+    grad.addColorStop(1, '#064273');
 
     ctx.beginPath();
     ctx.arc(cx, cy, globeR, 0, Math.PI * 2);
     ctx.fillStyle = grad;
     ctx.fill();
 
-    ctx.strokeStyle = 'rgba(140, 235, 255, 0.14)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(cx, cy, globeR * 0.66, 0, Math.PI * 2);
@@ -747,11 +762,11 @@ export class HUD {
       const py = cy - y * globeR;
 
       if (isObs) {
-        ctx.fillStyle = z >= 0 ? 'rgba(220, 210, 175, 0.6)' : 'rgba(220, 210, 175, 0.2)';
+        ctx.fillStyle = z >= 0 ? 'rgba(255, 241, 208, 0.78)' : 'rgba(255, 241, 208, 0.28)';
         ctx.fillRect(px - 1.2, py - 1.2, 2.4, 2.4);
       } else if (own >= 0) {
         ctx.fillStyle = contenderHexMap[own] || '#00f5d4';
-        ctx.globalAlpha = z >= 0 ? 0.85 : 0.25;
+        ctx.globalAlpha = z >= 0 ? 0.9 : 0.3;
         ctx.fillRect(px - 1.6, py - 1.6, 3.2, 3.2);
       }
     }
@@ -784,7 +799,6 @@ export class HUD {
 
     const localIsGhost = this.player.state === 'GHOST';
     for (const c of allContenders) {
-      // Respect Asymmetric Visibility on radar too!
       if (c.state === 'GHOST' && !localIsGhost) continue;
       const n = c.normal;
       const z = n.dot(front);
@@ -798,15 +812,15 @@ export class HUD {
       ctx.arc(px, py, c.isPlayer ? 4.5 : 3.2, 0, Math.PI * 2);
       ctx.fillStyle = c.state === 'GHOST' ? '#70f3ff' : (c.isPlayer ? '#ffffff' : c.colorHex);
       ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = '#03192e';
+      ctx.strokeStyle = '#041426';
+      ctx.lineWidth = 1.2;
       ctx.stroke();
     }
 
     ctx.beginPath();
     ctx.arc(cx, cy, globeR, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
     ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(0, 245, 212, 0.48)';
     ctx.stroke();
   }
 }

@@ -24,9 +24,10 @@ export class TerritoryGrid {
 
     // Per-cell logical state arrays (STRICTLY SEPARATED: owner vs trailOwner)
     this.cellNormals = new Float32Array(this.cellCount * 3);
-    this.owner = new Int16Array(this.cellCount).fill(-1);      // -1 = neutral water, >= 0 = contenderId
-    this.trailOwner = new Int16Array(this.cellCount).fill(-1); // -1 = none, >= 0 = active trail contenderId
-    this.obstacle = new Uint8Array(this.cellCount).fill(0);    // 0 = navigable water, 1 = impassable island/cliff/reef
+    this.owner = new Int16Array(this.cellCount).fill(-1);          // -1 = neutral water, >= 0 = contenderId
+    this.cellBrushWeight = new Float32Array(this.cellCount).fill(0); // Smooth radial brush weight [0..1]
+    this.trailOwner = new Int16Array(this.cellCount).fill(-1);     // -1 = none, >= 0 = active trail contenderId
+    this.obstacle = new Uint8Array(this.cellCount).fill(0);        // 0 = navigable water, 1 = impassable island/cliff/reef
 
     const maxContenders = Math.max(16, CONFIG.CONTENDER_PALETTE.length);
 
@@ -49,42 +50,34 @@ export class TerritoryGrid {
     this.ownerCounts = new Int32Array(maxContenders).fill(0);
     this.navigableCellCount = this.cellCount;
 
-    // GPU Vertex Attributes for Territory Surface Mat Shader
+    this.bfsVisited = new Int32Array(this.cellCount);
+    this.bfsQueue = new Int32Array(this.cellCount);
+    this.bfsStamp = 1;
+
+    this._buildTopologyAndSpatialIndex(posAttr);
+
+    // GPU Vertex Attributes for Organic Freeform Territory Shader (interpolated scalar SDF vWeight)
     const vertexCount = this.cellCount * 3;
     this.colorArray = new Float32Array(vertexCount * 3);
-    this.alphaArray = new Float32Array(vertexCount);
-    this.borderArray = new Float32Array(vertexCount);
+    this.weightArray = new Float32Array(vertexCount);
     this.patternArray = new Float32Array(vertexCount);
     this.borderTypeArray = new Float32Array(vertexCount);
 
-    this.colorAttr = new THREE.BufferAttribute(this.colorArray, 3);
-    this.alphaAttr = new THREE.BufferAttribute(this.alphaArray, 1);
-    this.borderAttr = new THREE.BufferAttribute(this.borderArray, 1);
-    this.patternAttr = new THREE.BufferAttribute(this.patternArray, 1);
-    this.borderTypeAttr = new THREE.BufferAttribute(this.borderTypeArray, 1);
-
-    this.colorAttr.setUsage(THREE.DynamicDrawUsage);
-    this.alphaAttr.setUsage(THREE.DynamicDrawUsage);
-    this.borderAttr.setUsage(THREE.DynamicDrawUsage);
-    this.patternAttr.setUsage(THREE.DynamicDrawUsage);
-    this.borderTypeAttr.setUsage(THREE.DynamicDrawUsage);
+    this.colorAttr = new THREE.BufferAttribute(this.colorArray, 3).setUsage(THREE.DynamicDrawUsage);
+    this.weightAttr = new THREE.BufferAttribute(this.weightArray, 1).setUsage(THREE.DynamicDrawUsage);
+    this.patternAttr = new THREE.BufferAttribute(this.patternArray, 1).setUsage(THREE.DynamicDrawUsage);
+    this.borderTypeAttr = new THREE.BufferAttribute(this.borderTypeArray, 1).setUsage(THREE.DynamicDrawUsage);
 
     this.geometry.setAttribute('aColor', this.colorAttr);
-    this.geometry.setAttribute('aAlpha', this.alphaAttr);
-    this.geometry.setAttribute('aBorder', this.borderAttr);
+    this.geometry.setAttribute('aWeight', this.weightAttr);
     this.geometry.setAttribute('aPattern', this.patternAttr);
     this.geometry.setAttribute('aBorderType', this.borderTypeAttr);
 
     this.material = createTerritoryMaterial(sunDirection);
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.renderOrder = 2;
+    this.mesh.frustumCulled = false;
     this.scene.add(this.mesh);
-
-    this.bfsVisited = new Int32Array(this.cellCount);
-    this.bfsQueue = new Int32Array(this.cellCount);
-    this.bfsStamp = 1;
-
-    this._buildTopologyAndSpatialIndex(posAttr);
   }
 
   /**
@@ -111,6 +104,10 @@ export class TerritoryGrid {
     }
   }
 
+  /**
+   * Builds cell spatial buckets, cell edge-neighbors for BFS flood-fill, AND the welded
+   * shared-vertex graph (`V = 16,812` vertices) for 3-pass Gaussian/Laplacian SDF smoothing.
+   */
   _buildTopologyAndSpatialIndex(posAttr) {
     const pos = posAttr.array;
 
@@ -118,17 +115,23 @@ export class TerritoryGrid {
     const totalBuckets = 6 * this.bucketRes * this.bucketRes;
     this.buckets = Array.from({ length: totalBuckets }, () => []);
 
-    const quantScale = 1000;
-    const vertexToCells = new Map();
+    const quantScale = 100;
+    const vertKeyToId = new Map();
+    this.cellVertIds = new Int32Array(this.cellCount * 3);
+    let V = 0;
 
-    const getVertexKey = (vx, vy, vz) => {
+    const getOrCreateVertId = (vx, vy, vz) => {
       const qx = Math.round(vx * quantScale);
       const qy = Math.round(vy * quantScale);
       const qz = Math.round(vz * quantScale);
-      return `${qx},${qy},${qz}`;
+      const key = `${qx},${qy},${qz}`;
+      let id = vertKeyToId.get(key);
+      if (id === undefined) {
+        id = V++;
+        vertKeyToId.set(key, id);
+      }
+      return id;
     };
-
-    const cellVertKeys = new Array(this.cellCount);
 
     for (let c = 0; c < this.cellCount; c++) {
       const i0 = c * 9;
@@ -149,28 +152,44 @@ export class TerritoryGrid {
       const bIdx = this._normalToBucketIndex(nx, ny, nz);
       this.buckets[bIdx].push(c);
 
-      const k0 = getVertexKey(ax, ay, az);
-      const k1 = getVertexKey(bx, by, bz);
-      const k2 = getVertexKey(cx, cy, cz);
-      cellVertKeys[c] = [k0, k1, k2];
-
-      for (const k of cellVertKeys[c]) {
-        let list = vertexToCells.get(k);
-        if (!list) {
-          list = [];
-          vertexToCells.set(k, list);
-        }
-        list.push(c);
-      }
+      const v0 = getOrCreateVertId(ax, ay, az);
+      const v1 = getOrCreateVertId(bx, by, bz);
+      const v2 = getOrCreateVertId(cx, cy, cz);
+      this.cellVertIds[c * 3]     = v0;
+      this.cellVertIds[c * 3 + 1] = v1;
+      this.cellVertIds[c * 3 + 2] = v2;
     }
 
+    this.weldedVertexCount = V;
+    const vCells = Array.from({ length: V }, () => []);
+    const vNeighbors = Array.from({ length: V }, () => []);
+    const linkVerts = (a, b) => {
+      if (vNeighbors[a].indexOf(b) === -1) vNeighbors[a].push(b);
+      if (vNeighbors[b].indexOf(a) === -1) vNeighbors[b].push(a);
+    };
+
+    for (let c = 0; c < this.cellCount; c++) {
+      const v0 = this.cellVertIds[c * 3];
+      const v1 = this.cellVertIds[c * 3 + 1];
+      const v2 = this.cellVertIds[c * 3 + 2];
+      vCells[v0].push(c);
+      vCells[v1].push(c);
+      vCells[v2].push(c);
+      linkVerts(v0, v1);
+      linkVerts(v1, v2);
+      linkVerts(v2, v0);
+    }
+
+    // Build cell edgeNeighbors (cells sharing >= 2 welded vertices)
     this.edgeNeighbors = new Int32Array(this.cellCount * 3).fill(-1);
     for (let c = 0; c < this.cellCount; c++) {
-      const [k0, k1, k2] = cellVertKeys[c];
+      const v0 = this.cellVertIds[c * 3];
+      const v1 = this.cellVertIds[c * 3 + 1];
+      const v2 = this.cellVertIds[c * 3 + 2];
       const candidates = new Map();
 
-      for (const k of [k0, k1, k2]) {
-        const list = vertexToCells.get(k);
+      for (const v of [v0, v1, v2]) {
+        const list = vCells[v];
         for (let i = 0; i < list.length; i++) {
           const other = list[i];
           if (other === c) continue;
@@ -186,6 +205,33 @@ export class TerritoryGrid {
         }
       }
     }
+
+    // Flatten vertex->cells and vertex->neighbors into fast CSR typed arrays for 3-pass smoothing
+    this.vCellOffsets = new Int32Array(V + 1);
+    this.vAdjOffsets = new Int32Array(V + 1);
+    let totalVC = 0;
+    let totalVA = 0;
+    for (let v = 0; v < V; v++) {
+      this.vCellOffsets[v] = totalVC;
+      totalVC += vCells[v].length;
+      this.vAdjOffsets[v] = totalVA;
+      totalVA += vNeighbors[v].length;
+    }
+    this.vCellOffsets[V] = totalVC;
+    this.vAdjOffsets[V] = totalVA;
+
+    this.vCellList = new Int32Array(totalVC);
+    this.vAdjList = new Int32Array(totalVA);
+    for (let v = 0; v < V; v++) {
+      this.vCellList.set(vCells[v], this.vCellOffsets[v]);
+      this.vAdjList.set(vNeighbors[v], this.vAdjOffsets[v]);
+    }
+
+    // Working buffers for 3-pass Gaussian/Laplacian vertex smoothing
+    this.vOwner = new Int16Array(V).fill(-1);
+    this.vConflict = new Uint8Array(V);
+    this.vWeightA = new Float32Array(V);
+    this.vWeightB = new Float32Array(V);
   }
 
   _normalToBucketIndex(nx, ny, nz) {
@@ -302,6 +348,14 @@ export class TerritoryGrid {
   }
 
   /**
+   * Clears all obstacle flags on the grid (used when dynamically toggling or regenerating obstacles).
+   */
+  clearObstacles() {
+    this.obstacle.fill(0);
+    this.navigableCellCount = this.cellCount;
+  }
+
+  /**
    * Note: We keep `obstacle` tracking mild on the inner core so players can still
    * capture territory right up to the sandy shoreline of every island!
    */
@@ -319,10 +373,15 @@ export class TerritoryGrid {
   /**
    * Updates `this.owner[cellIdx]` and synchronizes `this.ownedCellsSets` + `this.ownerCounts`.
    */
-  _setCellOwner(cellIdx, newOwnerId) {
+  _setCellOwner(cellIdx, newOwnerId, brushWeight = 1.0) {
     if (this.obstacle[cellIdx] !== 0) return false;
     const prevOwner = this.owner[cellIdx];
-    if (prevOwner === newOwnerId) return false;
+    if (prevOwner === newOwnerId) {
+      if (newOwnerId >= 0 && brushWeight > this.cellBrushWeight[cellIdx]) {
+        this.cellBrushWeight[cellIdx] = brushWeight;
+      }
+      return false;
+    }
 
     if (prevOwner >= 0) {
       this.ownerCounts[prevOwner] = Math.max(0, this.ownerCounts[prevOwner] - 1);
@@ -332,22 +391,47 @@ export class TerritoryGrid {
     if (newOwnerId >= 0) {
       this.ownerCounts[newOwnerId]++;
       this.ownedCellsSets[newOwnerId]?.add(cellIdx);
+      this.cellBrushWeight[cellIdx] = brushWeight;
+    } else {
+      this.cellBrushWeight[cellIdx] = 0.0;
     }
     return true;
   }
 
   /**
-   * Claims a circular disk of cells for `contenderId`.
+   * Stamps a smooth circular radial brush at `posOrNormal` with radius `worldRadius`.
+   */
+  _stampRadialBrush(posOrNormal, worldRadius, contenderId) {
+    const len = posOrNormal.length() || 1;
+    const nx = posOrNormal.x / len;
+    const ny = posOrNormal.y / len;
+    const nz = posOrNormal.z / len;
+
+    const cells = this.getCellsInRadius(posOrNormal, worldRadius);
+    let newlyClaimed = 0;
+    const cn = this.cellNormals;
+
+    for (let i = 0; i < cells.length; i++) {
+      const c = cells[i];
+      const dot = Math.min(1.0, nx * cn[c * 3] + ny * cn[c * 3 + 1] + nz * cn[c * 3 + 2]);
+      const arcDist = Math.acos(Math.max(-1.0, dot)) * this.radius;
+      const radialT = Math.max(0.0, Math.min(1.0, 1.0 - (arcDist / Math.max(0.1, worldRadius)) * 0.32));
+      if (this._setCellOwner(c, contenderId, radialT)) {
+        newlyClaimed++;
+      }
+    }
+    return { newlyClaimed, cells };
+  }
+
+  /**
+   * Claims a circular disk of cells for `contenderId` using a smooth radial paint brush.
    * If `contenderId`'s center lands near an obstacle, also claims unobstructed cells around it.
    */
   claimDisk(posOrNormal, worldRadius, contenderId, syncGPU = true) {
-    const cells = this.getCellsInRadius(posOrNormal, worldRadius);
-    let changed = false;
+    const { newlyClaimed, cells } = this._stampRadialBrush(posOrNormal, worldRadius, contenderId);
+    let changed = newlyClaimed > 0;
     let claimedCount = 0;
     for (let i = 0; i < cells.length; i++) {
-      if (this._setCellOwner(cells[i], contenderId)) {
-        changed = true;
-      }
       if (this.owner[cells[i]] === contenderId) {
         claimedCount++;
       }
@@ -358,7 +442,7 @@ export class TerritoryGrid {
       for (let i = 0; i < Math.min(cells.length, 16); i++) {
         const c = cells[i];
         this.obstacle[c] = 0;
-        if (this._setCellOwner(c, contenderId)) {
+        if (this._setCellOwner(c, contenderId, 1.0)) {
           changed = true;
         }
       }
@@ -376,11 +460,11 @@ export class TerritoryGrid {
    */
   stampTrailSegment(prevPos, currPos, contenderId, worldWidth, claimImmediately = false) {
     const dist = prevPos.distanceTo(currPos);
-    const steps = Math.max(1, Math.ceil(dist / 0.8));
+    const steps = Math.max(1, Math.ceil(dist / 0.7));
     const tempVec = new THREE.Vector3();
     let changedTerritory = false;
 
-    const brushRadius = Math.max(1.85, worldWidth * 0.72);
+    const brushRadius = Math.max(2.15, worldWidth * 0.82);
     const trailSet = this.activeTrailCellsSets[contenderId];
 
     for (let s = 0; s <= steps; s++) {
@@ -392,7 +476,7 @@ export class TerritoryGrid {
         if (this.obstacle[c] !== 0) continue;
         this.trailOwner[c] = contenderId;
         if (trailSet) trailSet.add(c);
-        if (claimImmediately && this._setCellOwner(c, contenderId)) {
+        if (claimImmediately && this._setCellOwner(c, contenderId, 0.95)) {
           changedTerritory = true;
         }
       }
@@ -439,6 +523,7 @@ export class TerritoryGrid {
       for (const c of ownedSet) {
         if (this.owner[c] === contenderId) {
           this.owner[c] = -1;
+          this.cellBrushWeight[c] = 0.0;
           changed = true;
         }
       }
@@ -447,6 +532,7 @@ export class TerritoryGrid {
       for (let c = 0; c < this.cellCount; c++) {
         if (this.owner[c] === contenderId) {
           this.owner[c] = -1;
+          this.cellBrushWeight[c] = 0.0;
           changed = true;
         }
       }
@@ -476,27 +562,36 @@ export class TerritoryGrid {
   }
 
   /**
-   * Closes a contender's active trail loop and executes the spherical BFS Flood-Fill.
+   * Closes a contender's active trail loop by stamping a smooth circular radial brush along
+   * their continuous `CatmullRomCurve3` spline path, then executes the spherical BFS Flood-Fill
+   * and 3-pass Gaussian/Laplacian vertex smoothing.
    */
   closeLoopAndFloodFill(contenderId, trailPoints, trailWidth = CONFIG.NORMAL_TRAIL_WIDTH) {
     let newlyCaptured = 0;
-    const brushRadius = Math.max(1.95, trailWidth * 0.72);
+    const brushRadius = Math.max(2.35, trailWidth * 0.88);
 
-    for (let i = 0; i < trailPoints.length; i++) {
-      const p = trailPoints[i];
-      const cells = this.getCellsInRadius(p, brushRadius);
-      for (let j = 0; j < cells.length; j++) {
-        if (this._setCellOwner(cells[j], contenderId)) {
-          newlyCaptured++;
-        }
+    // 1. Stamp smooth circular radial brush along the continuous CatmullRomCurve3 spline path
+    if (trailPoints && trailPoints.length >= 2) {
+      const spline = new THREE.CatmullRomCurve3(trailPoints);
+      const sampleCount = Math.max(24, trailPoints.length * 3);
+      const samplePt = new THREE.Vector3();
+
+      for (let s = 0; s <= sampleCount; s++) {
+        spline.getPoint(s / sampleCount, samplePt);
+        const { newlyClaimed } = this._stampRadialBrush(samplePt, brushRadius, contenderId);
+        newlyCaptured += newlyClaimed;
       }
+    } else if (trailPoints && trailPoints.length === 1) {
+      const { newlyClaimed } = this._stampRadialBrush(trailPoints[0], brushRadius, contenderId);
+      newlyCaptured += newlyClaimed;
     }
 
+    // 2. Also convert any remaining activeTrailCells into ownedCells
     const trailSet = this.activeTrailCellsSets[contenderId];
     if (trailSet && trailSet.size > 0) {
       for (const c of trailSet) {
         this.trailOwner[c] = -1;
-        if (this._setCellOwner(c, contenderId)) {
+        if (this._setCellOwner(c, contenderId, 0.96)) {
           newlyCaptured++;
         }
       }
@@ -505,13 +600,14 @@ export class TerritoryGrid {
       for (let c = 0; c < this.cellCount; c++) {
         if (this.trailOwner[c] === contenderId) {
           this.trailOwner[c] = -1;
-          if (this._setCellOwner(c, contenderId)) {
+          if (this._setCellOwner(c, contenderId, 0.96)) {
             newlyCaptured++;
           }
         }
       }
     }
 
+    // 3. Spherical BFS Flood-Fill of enclosed interior regions
     this.bfsStamp = (this.bfsStamp + 1) | 0;
     const stamp = this.bfsStamp;
 
@@ -555,7 +651,7 @@ export class TerritoryGrid {
       if (tail > 0 && tail < hemisphereThreshold) {
         for (let i = 0; i < tail; i++) {
           const cellToClaim = this.bfsQueue[i];
-          if (this._setCellOwner(cellToClaim, contenderId)) {
+          if (this._setCellOwner(cellToClaim, contenderId, 1.0)) {
             newlyCaptured++;
           }
         }
@@ -614,71 +710,180 @@ export class TerritoryGrid {
     return (this.ownerCounts[contenderId] / this.navigableCellCount) * 100;
   }
 
+  /**
+   * Computes a smooth scalar SDF weight field `aWeight` (`[0..1]`) on the welded vertex graph
+   * and applies a 3-pass Gaussian/Laplacian smoothing filter (`smoothWeight`) across neighbor
+   * vertices so captured territories render as 100% curvy, liquid freeform paint blobs with
+   * a continuous glowing neon tube rim and zero polygonal triangle edges.
+   */
   syncBuffersToGPU() {
+    const V = this.weldedVertexCount;
+    const ownerArr = this.owner;
+    const brushArr = this.cellBrushWeight;
+    const vCellOffsets = this.vCellOffsets;
+    const vCellList = this.vCellList;
+    const vAdjOffsets = this.vAdjOffsets;
+    const vAdjList = this.vAdjList;
+
+    const vOwner = this.vOwner;
+    const vConflict = this.vConflict;
+    let srcW = this.vWeightA;
+    let dstW = this.vWeightB;
+
+    // Step 1: Project cell ownership & radial brush weights onto shared vertices
+    for (let v = 0; v < V; v++) {
+      const start = vCellOffsets[v];
+      const end = vCellOffsets[v + 1];
+      const deg = end - start || 1;
+
+      let domOwner = -1;
+      let domWeightSum = 0.0;
+      let otherOwnerPresent = 0;
+
+      for (let i = start; i < end; i++) {
+        const c = vCellList[i];
+        const own = ownerArr[c];
+        if (own < 0) continue;
+        const bw = brushArr[c] || 1.0;
+        if (domOwner === -1) {
+          domOwner = own;
+          domWeightSum = bw;
+        } else if (own === domOwner) {
+          domWeightSum += bw;
+        } else {
+          otherOwnerPresent = 1;
+        }
+      }
+
+      vOwner[v] = domOwner;
+      vConflict[v] = otherOwnerPresent;
+      if (domOwner >= 0) {
+        const rawW = domWeightSum / deg;
+        srcW[v] = otherOwnerPresent ? Math.min(0.36, rawW) : rawW;
+      } else {
+        srcW[v] = 0.0;
+      }
+    }
+
+    // Step 2: 3-pass Gaussian/Laplacian smoothing across neighbor vertices
+    const passes = CONFIG.TERRITORY_SMOOTH_PASSES || 3;
+    const smoothWeight = CONFIG.TERRITORY_SMOOTH_WEIGHT !== undefined ? CONFIG.TERRITORY_SMOOTH_WEIGHT : 0.5;
+
+    for (let pass = 0; pass < passes; pass++) {
+      for (let v = 0; v < V; v++) {
+        const start = vAdjOffsets[v];
+        const end = vAdjOffsets[v + 1];
+        let myOwn = vOwner[v];
+
+        // Propagate contender ownership outward into the neutral smoothing halo
+        if (myOwn < 0) {
+          let bestOwn = -1;
+          let bestW = 0.0;
+          for (let i = start; i < end; i++) {
+            const nb = vAdjList[i];
+            if (vOwner[nb] >= 0 && srcW[nb] > bestW) {
+              bestW = srcW[nb];
+              bestOwn = vOwner[nb];
+            }
+          }
+          if (bestOwn >= 0 && bestW > 0.02) {
+            myOwn = bestOwn;
+            vOwner[v] = bestOwn;
+          }
+        }
+
+        if (myOwn < 0) {
+          dstW[v] = 0.0;
+          continue;
+        }
+
+        const deg = end - start || 1;
+        let nbSum = 0.0;
+        for (let i = start; i < end; i++) {
+          const nb = vAdjList[i];
+          if (vOwner[nb] === myOwn) {
+            nbSum += srcW[nb];
+          }
+        }
+        const nbAvg = nbSum / deg;
+        const smoothed = (1.0 - smoothWeight) * srcW[v] + smoothWeight * nbAvg;
+        dstW[v] = vConflict[v] ? Math.min(0.36, smoothed) : smoothed;
+      }
+
+      const tmp = srcW;
+      srcW = dstW;
+      dstW = tmp;
+    }
+
+    // Step 3: Write smoothed vertex weights (`aWeight`) and contender styles into GPU buffers
     const colors = this.colorArray;
-    const alphas = this.alphaArray;
-    const borders = this.borderArray;
+    const weights = this.weightArray;
     const patterns = this.patternArray;
     const borderTypes = this.borderTypeArray;
-    const ownerArr = this.owner;
-    const edgeArr = this.edgeNeighbors;
+    const cellVertIds = this.cellVertIds;
     const palette = this.contenderRGB;
     const patIdxArr = this.contenderPatternIndex;
     const brdIdxArr = this.contenderBorderIndex;
 
     for (let c = 0; c < this.cellCount; c++) {
-      const own = ownerArr[c];
       const vBase = c * 3;
       const cBase = c * 9;
 
-      if (own < 0) {
-        alphas[vBase]     = 0.0;
-        alphas[vBase + 1] = 0.0;
-        alphas[vBase + 2] = 0.0;
-        borders[vBase]     = 0.0;
-        borders[vBase + 1] = 0.0;
-        borders[vBase + 2] = 0.0;
+      const v0 = cellVertIds[vBase];
+      const v1 = cellVertIds[vBase + 1];
+      const v2 = cellVertIds[vBase + 2];
+
+      const w0 = srcW[v0];
+      const w1 = srcW[v1];
+      const w2 = srcW[v2];
+
+      // Fast discard for completely empty neutral triangles
+      if (w0 < 0.02 && w1 < 0.02 && w2 < 0.02) {
+        weights[vBase]     = 0.0;
+        weights[vBase + 1] = 0.0;
+        weights[vBase + 2] = 0.0;
         continue;
       }
 
-      const rgb = palette[own] || [1, 1, 1];
+      // Pick consistent contender style for all 3 corners of this triangle so colors never bleed
+      let triOwner = ownerArr[c];
+      if (triOwner < 0) {
+        if (w0 >= w1 && w0 >= w2 && vOwner[v0] >= 0) triOwner = vOwner[v0];
+        else if (w1 >= w0 && w1 >= w2 && vOwner[v1] >= 0) triOwner = vOwner[v1];
+        else triOwner = vOwner[v2];
+      }
+
+      if (triOwner < 0) {
+        weights[vBase]     = 0.0;
+        weights[vBase + 1] = 0.0;
+        weights[vBase + 2] = 0.0;
+        continue;
+      }
+
+      const rgb = palette[triOwner] || [1, 1, 1];
       const r = rgb[0], g = rgb[1], b = rgb[2];
 
       colors[cBase]     = r; colors[cBase + 1] = g; colors[cBase + 2] = b;
       colors[cBase + 3] = r; colors[cBase + 4] = g; colors[cBase + 5] = b;
       colors[cBase + 6] = r; colors[cBase + 7] = g; colors[cBase + 8] = b;
 
-      alphas[vBase]     = 1.0;
-      alphas[vBase + 1] = 1.0;
-      alphas[vBase + 2] = 1.0;
+      weights[vBase]     = vOwner[v0] === triOwner ? w0 : 0.0;
+      weights[vBase + 1] = vOwner[v1] === triOwner ? w1 : 0.0;
+      weights[vBase + 2] = vOwner[v2] === triOwner ? w2 : 0.0;
 
-      const patVal = patIdxArr[own] || 0;
+      const patVal = patIdxArr[triOwner] || 0;
       patterns[vBase]     = patVal;
       patterns[vBase + 1] = patVal;
       patterns[vBase + 2] = patVal;
 
-      const brdTypeVal = brdIdxArr[own] || 0;
+      const brdTypeVal = brdIdxArr[triOwner] || 0;
       borderTypes[vBase]     = brdTypeVal;
       borderTypes[vBase + 1] = brdTypeVal;
       borderTypes[vBase + 2] = brdTypeVal;
-
-      const n0 = edgeArr[vBase];
-      const n1 = edgeArr[vBase + 1];
-      const n2 = edgeArr[vBase + 2];
-
-      const isBorder = (n0 < 0 || ownerArr[n0] !== own) ||
-                       (n1 < 0 || ownerArr[n1] !== own) ||
-                       (n2 < 0 || ownerArr[n2] !== own);
-
-      const borderVal = isBorder ? 1.0 : 0.0;
-      borders[vBase]     = borderVal;
-      borders[vBase + 1] = borderVal;
-      borders[vBase + 2] = borderVal;
     }
 
     this.colorAttr.needsUpdate = true;
-    this.alphaAttr.needsUpdate = true;
-    this.borderAttr.needsUpdate = true;
+    this.weightAttr.needsUpdate = true;
     this.patternAttr.needsUpdate = true;
     this.borderTypeAttr.needsUpdate = true;
   }

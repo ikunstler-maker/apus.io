@@ -5,7 +5,14 @@
 export const CONFIG = {
   // Spherical World
   SPHERE_RADIUS: 100,
-  SUBDIVISION_DETAIL: 27, // Icosahedron subdivision: 20 * (27+1)^2 = 15,680 geodesic cells
+  SUBDIVISION_DETAIL: 40, // Logical capture grid: 20 * (40+1)^2 = 33,620 geodesic cells (~2.9 units each)
+
+  // Organic Freeform Territory Rendering (smooth SDF paint blobs — zero visible facets)
+  TERRITORY_RENDER_DETAIL: 80,     // Shared-vertex render sphere: 65,612 vertices (~1.5 unit spacing)
+  TERRITORY_KERNEL_RADIUS: 4.6,    // Gaussian sampling radius (world units) from logical cells to render vertices
+  TERRITORY_KERNEL_SIGMA: 1.9,     // Gaussian sigma for the radial paint brush falloff
+  TERRITORY_SMOOTH_PASSES: 3,      // Laplacian smoothing passes across neighbor vertices
+  TERRITORY_SMOOTH_WEIGHT: 0.5,    // smoothWeight: 0 = no smoothing, 1 = full neighbor average
 
   // Gameplay Rules & Toggles
   ALLOW_SELF_CROSS: false,        // Crossing one's own active trail severs it and triggers elimination
@@ -18,6 +25,7 @@ export const CONFIG = {
   DIFFICULTY: 'normal',           // 'easy' | 'normal' | 'hard'
   SHARK_COUNT: 5,                 // Slider from 0 to 15 patrolling sharks (default: 5)
   SHARK_SPEED_MULTIPLIER: 1.0,    // Slider from 0.5x (Lazy) to 2.0x (Frenzy)
+  OBSTACLE_MODE: 'normal',        // 'none' | 'low' | 'normal' | 'dense' (Lobby + in-game HUD)
 
   // Contenders & Movement
   MAX_PLAYERS: 10,                // Total contenders in a full room (1 Local + up to 9 Bots/Peers)
@@ -39,18 +47,24 @@ export const CONFIG = {
   BROAD_BRUSH_MULTIPLIER: 2.4,    // Extra wide corridor during Wide Wake power-up
   TRAIL_HIT_RADIUS: 1.75,         // Collision radius for severing an active trail
 
-  // Camera Framing (Wide Panoramic Isometric View matching reference screenshot)
-  CAMERA_FOV: 35,                 // Isometric-style panoramic FOV = 35 deg
-  CAMERA_ELEVATION_DEG: 48,       // Elevation angle 48 deg above local tangent plane (42 deg from normal)
-  CAMERA_DISTANCE: 92,            // Panoramic orbit distance (92 units) showing islands, sharks & rivals
-  CAMERA_MIN_DISTANCE: 55,        // Mouse-wheel zoom-in limit
+  // Camera Framing (Close Diorama View — ocean fills ~95% of the screen)
+  CAMERA_FOV: 26,                 // Narrow diorama FOV = 26 deg
+  CAMERA_ELEVATION_DEG: 30,       // 30 deg above the tangent plane (60 deg from normal) => horizon at ~8% from top
+  CAMERA_DISTANCE: 30,            // Close orbit distance (30 units)
+  CAMERA_MIN_DISTANCE: 22,        // Mouse-wheel zoom-in limit
   CAMERA_MAX_DISTANCE: 145,       // Mouse-wheel zoom-out limit
   CAMERA_SMOOTHNESS: 8.0,         // Smooth damping factor for camera orbit follow
 
-  // World Obstacles
+  // World Obstacles (base counts for 'normal' mode; scaled by OBSTACLE_DENSITY_PRESETS)
   CLIFF_COUNT: 12,
   TREE_ISLAND_COUNT: 14,
   CORAL_REEF_COUNT: 14,
+  OBSTACLE_DENSITY_PRESETS: {
+    none:   { id: 'none',   label: 'None (Clean Open Ocean)',       icon: '🌊', density: 0.0,  minSpacing: 20.5 },
+    low:    { id: 'low',    label: 'Low (Sparse Islands)',          icon: '🏝️', density: 0.35, minSpacing: 22.0 },
+    normal: { id: 'normal', label: 'Normal (Tropical Archipelago)', icon: '🌴', density: 1.0,  minSpacing: 20.5 },
+    dense:  { id: 'dense',  label: 'Dense (Reef Maze)',             icon: '🪸', density: 1.5,  minSpacing: 16.5 }
+  },
 
   // Dynamic Hazards & Power-Ups
   WHIRLPOOL_PAIR_COUNT: 3,        // 3 pairs = 6 linked vortexes on opposite hemispheres

@@ -20,26 +20,32 @@ export class SphereWorld {
     this.territoryGrid = territoryGrid;
     this.radius = CONFIG.SPHERE_RADIUS;
 
-    // Warm golden directional sunlight from top-left
-    this.sunDirection = new THREE.Vector3(-0.45, 0.82, 0.35).normalize();
+    // Warm golden-amber directional sunlight from top-center / top-left horizon
+    this.sunDirection = new THREE.Vector3(-0.32, 0.84, 0.44).normalize();
 
     this.obstacles = []; // Array of { normal, position, radius, type, mesh }
+    this.obstacleMode = CONFIG.OBSTACLE_MODE || 'normal';
+    this.obstaclesEnabled = this.obstacleMode !== 'none';
+
     this.foamMaterial = createFoamRingMaterial();
     this.sunbeamsMaterial = createSunbeamsMaterial();
+
+    this.obstacleGroup = new THREE.Group();
+    this.scene.add(this.obstacleGroup);
 
     this._setupLighting();
     this._createOceanSphere();
     this._createCrepuscularSunbeams();
-    this._generateProceduralObstacles();
+    this._generateProceduralObstacles(this.obstacleMode);
   }
 
   _setupLighting() {
-    // Sunny Claymorphism studio lighting: HemisphereLight(0xfff5d6, 0x1ca3ec, 1.4)
-    this.hemiLight = new THREE.HemisphereLight(0xfff5d6, 0x1ca3ec, 1.4);
+    // Rich tropical sky-to-deep-marine-teal HemisphereLight
+    this.hemiLight = new THREE.HemisphereLight(0xffefb8, 0x063b5a, 1.25);
     this.scene.add(this.hemiLight);
 
-    // Shadow-casting DirectionalLight(0xfff0c2, 2.6)
-    this.sunLight = new THREE.DirectionalLight(0xfff0c2, 2.6);
+    // Warm Golden Amber DirectionalLight (#ffd175, intensity 2.8) casting soft shadows
+    this.sunLight = new THREE.DirectionalLight(0xffd175, 2.8);
     this.sunLight.position.copy(this.sunDirection).multiplyScalar(250);
     this.sunLight.castShadow = true;
 
@@ -55,15 +61,15 @@ export class SphereWorld {
     this.sunLight.shadow.bias = -0.0006;
     this.scene.add(this.sunLight);
 
-    // Warm turquoise fill light from opposite side so clay shadows stay soft and colorful
-    this.rimLight = new THREE.DirectionalLight(0x48cae4, 0.85);
+    // Soft teal-turquoise fill light from opposite side so clay shadows stay rich and colorful
+    this.rimLight = new THREE.DirectionalLight(0x0ca4bd, 0.75);
     this.rimLight.position.copy(this.sunDirection).multiplyScalar(-200);
     this.scene.add(this.rimLight);
   }
 
   _createOceanSphere() {
     // High-resolution smooth spherical ocean
-    const oceanGeo = new THREE.IcosahedronGeometry(this.radius, 44);
+    const oceanGeo = new THREE.IcosahedronGeometry(this.radius, 48);
     oceanGeo.computeVertexNormals();
     this.oceanMaterial = createOceanMaterial(this.sunDirection);
     this.oceanMesh = new THREE.Mesh(oceanGeo, this.oceanMaterial);
@@ -71,8 +77,8 @@ export class SphereWorld {
     this.oceanMesh.renderOrder = 1;
     this.scene.add(this.oceanMesh);
 
-    // Warm sunny horizon glow around the sphere
-    const atmosGeo = new THREE.IcosahedronGeometry(this.radius * 1.08, 28);
+    // Subtle warm golden horizon atmospheric rim (#ffe8a3) at the very back edge of the sphere
+    const atmosGeo = new THREE.IcosahedronGeometry(this.radius * 1.045, 32);
     atmosGeo.computeVertexNormals();
     this.atmosMaterial = createAtmosphereMaterial();
     this.atmosMesh = new THREE.Mesh(atmosGeo, this.atmosMaterial);
@@ -80,17 +86,17 @@ export class SphereWorld {
   }
 
   /**
-   * Diagonal golden Sunbeam Overlays (God Rays) cast from the top-left directional sun.
+   * Warm golden-amber diagonal Sunbeam Shafts (God Rays) streaming from the top-left/top-center horizon.
    */
   _createCrepuscularSunbeams() {
     this.sunbeamsGroup = new THREE.Group();
 
     const rayConfigs = [
-      { radiusTop: 7,   radiusBottom: 42, height: 190, offset: new THREE.Vector3(-12, 8, 6) },
-      { radiusTop: 4.5, radiusBottom: 28, height: 175, offset: new THREE.Vector3(18, -10, 14) },
-      { radiusTop: 5.5, radiusBottom: 34, height: 185, offset: new THREE.Vector3(-26, 14, -12) },
-      { radiusTop: 4.0, radiusBottom: 26, height: 170, offset: new THREE.Vector3(12, 20, -20) },
-      { radiusTop: 5.0, radiusBottom: 31, height: 180, offset: new THREE.Vector3(-16, -22, 18) }
+      { radiusTop: 7,   radiusBottom: 42, height: 190, offset: new THREE.Vector3(-10, 12, 8) },
+      { radiusTop: 4.5, radiusBottom: 28, height: 175, offset: new THREE.Vector3(16, -8, 14) },
+      { radiusTop: 5.5, radiusBottom: 34, height: 185, offset: new THREE.Vector3(-22, 16, -10) },
+      { radiusTop: 4.0, radiusBottom: 26, height: 170, offset: new THREE.Vector3(10, 22, -18) },
+      { radiusTop: 5.0, radiusBottom: 31, height: 180, offset: new THREE.Vector3(-14, -18, 16) }
     ];
 
     const up = new THREE.Vector3(0, 1, 0);
@@ -123,20 +129,50 @@ export class SphereWorld {
   }
 
   /**
-   * Procedurally populates the sphere with smooth clay-styled tropical islands,
-   * thick ancient trees with 6-9 high-res smooth sphere canopies, sculpted rocks, and coral reefs.
+   * Dynamically switches or regenerates static obstacles ('none' | 'low' | 'normal' | 'dense')
+   * in-game or from the Pre-Game Lobby without crashing the current match!
    */
-  _generateProceduralObstacles() {
-    this.obstacleGroup = new THREE.Group();
-    this.scene.add(this.obstacleGroup);
+  setObstacleMode(modeId = 'normal', activeContenders = []) {
+    const validMode = CONFIG.OBSTACLE_DENSITY_PRESETS[modeId] ? modeId : 'normal';
+    CONFIG.OBSTACLE_MODE = validMode;
+    this.obstacleMode = validMode;
+    this.obstaclesEnabled = validMode !== 'none';
 
-    const totalObstacles =
-      CONFIG.CLIFF_COUNT + CONFIG.TREE_ISLAND_COUNT + CONFIG.CORAL_REEF_COUNT;
+    this._generateProceduralObstacles(validMode, activeContenders);
+    this.territoryGrid.syncBuffersToGPU();
+    return CONFIG.OBSTACLE_DENSITY_PRESETS[validMode];
+  }
+
+  /**
+   * Procedurally populates (or clears) the sphere with smooth clay-styled tropical islands,
+   * thick ancient trees, sculpted rocks, and coral reefs according to `modeId`.
+   */
+  _generateProceduralObstacles(modeId = 'normal', activeContenders = []) {
+    // 1. Clear any existing obstacle meshes and reset grid obstacle flags
+    while (this.obstacleGroup.children.length > 0) {
+      this.obstacleGroup.remove(this.obstacleGroup.children[0]);
+    }
+    this.obstacles.length = 0;
+    this.territoryGrid.clearObstacles();
+
+    const preset = CONFIG.OBSTACLE_DENSITY_PRESETS[modeId] || CONFIG.OBSTACLE_DENSITY_PRESETS.normal;
+    const density = preset.density;
+
+    if (density <= 0.001) {
+      this._syncOceanIslandUniforms();
+      return;
+    }
+
+    const treeCount = Math.max(1, Math.round(CONFIG.TREE_ISLAND_COUNT * density));
+    const cliffCount = Math.max(1, Math.round(CONFIG.CLIFF_COUNT * density));
+    const coralCount = Math.max(1, Math.round(CONFIG.CORAL_REEF_COUNT * density));
+    const totalObstacles = treeCount + cliffCount + coralCount;
 
     const playerStartNormal = new THREE.Vector3(0, 0.15, 0.988).normalize();
     const candidateNormals = [];
     const goldenRatio = (1 + Math.sqrt(5)) / 2;
-    const sampleCount = totalObstacles + 22;
+    const sampleCount = totalObstacles + 36;
+    const minSpacing = preset.minSpacing || 20.5;
 
     let seed = 133742;
     const rand = () => {
@@ -145,7 +181,7 @@ export class SphereWorld {
     };
 
     for (let i = 0; i < sampleCount; i++) {
-      const y = 1 - (i / (sampleCount - 1)) * 2;
+      const y = 1 - (i / Math.max(1, sampleCount - 1)) * 2;
       const radiusAtY = Math.sqrt(Math.max(0, 1 - y * y));
       const theta = (2 * Math.PI * i) / goldenRatio + (rand() - 0.5) * 0.25;
 
@@ -156,11 +192,24 @@ export class SphereWorld {
       ).normalize();
 
       // Keep clear of player default start zone
-      if (normal.angleTo(playerStartNormal) * this.radius < 22) continue;
+      if (normal.angleTo(playerStartNormal) * this.radius < 19.0) continue;
+
+      // Keep clear of any currently living contenders so toggling in-game never traps anyone
+      let hitsContender = false;
+      for (let c = 0; c < activeContenders.length; c++) {
+        const cont = activeContenders[c];
+        if (cont && cont.state === 'ALIVE' && cont.normal) {
+          if (normal.angleTo(cont.normal) * this.radius < 11.5) {
+            hitsContender = true;
+            break;
+          }
+        }
+      }
+      if (hitsContender) continue;
 
       let tooClose = false;
       for (let j = 0; j < candidateNormals.length; j++) {
-        if (normal.angleTo(candidateNormals[j]) * this.radius < 20.5) {
+        if (normal.angleTo(candidateNormals[j]) * this.radius < minSpacing) {
           tooClose = true;
           break;
         }
@@ -172,25 +221,47 @@ export class SphereWorld {
     }
 
     let idx = 0;
-    // 1. Giant Thick Ancient Trees on Cream-Sand Islands (placed first so several are visible near start!)
-    for (let i = 0; i < CONFIG.TREE_ISLAND_COUNT && idx < candidateNormals.length; i++, idx++) {
+    // 1. Giant Thick Ancient Trees on Cream-Sand Islands
+    for (let i = 0; i < treeCount && idx < candidateNormals.length; i++, idx++) {
       const normal = candidateNormals[idx];
       const radius = 6.2 + rand() * 1.8;
       this._buildAncientTreeIsland(normal, radius, rand);
     }
 
     // 2. Smooth Sculpted Sea Cliffs & Sandy Rock Islets
-    for (let i = 0; i < CONFIG.CLIFF_COUNT && idx < candidateNormals.length; i++, idx++) {
+    for (let i = 0; i < cliffCount && idx < candidateNormals.length; i++, idx++) {
       const normal = candidateNormals[idx];
       const radius = 5.4 + rand() * 1.8;
       this._buildJaggedCliff(normal, radius, rand);
     }
 
     // 3. Vibrant Smooth Coral Reefs
-    for (let i = 0; i < CONFIG.CORAL_REEF_COUNT && idx < candidateNormals.length; i++, idx++) {
+    for (let i = 0; i < coralCount && idx < candidateNormals.length; i++, idx++) {
       const normal = candidateNormals[idx];
       const radius = 4.8 + rand() * 1.6;
       this._buildCoralReef(normal, radius, rand);
+    }
+
+    this._syncOceanIslandUniforms();
+  }
+
+  /**
+   * Passes obstacle normal vectors and angular radii into the Ocean Shader so shallow
+   * turquoise lagoon rings (#2ec4b6) and soft dark-teal island shadows appear around every island!
+   */
+  _syncOceanIslandUniforms() {
+    if (!this.oceanMaterial || !this.oceanMaterial.uniforms.uIslands) return;
+    const arr = this.oceanMaterial.uniforms.uIslands.value;
+    const count = Math.min(arr.length, this.obstacles.length);
+    this.oceanMaterial.uniforms.uIslandCount.value = count;
+
+    for (let i = 0; i < arr.length; i++) {
+      if (i < count) {
+        const obs = this.obstacles[i];
+        arr[i].set(obs.normal.x, obs.normal.y, obs.normal.z, obs.radius / this.radius);
+      } else {
+        arr[i].set(0, 0, 0, 0);
+      }
     }
   }
 

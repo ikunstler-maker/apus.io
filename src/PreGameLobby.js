@@ -13,8 +13,9 @@ export class PreGameLobby {
    * @param {Object} options
    * @param {Function} options.onLaunchMatch Called with { loadout, roomConfig, matchSettings }
    */
-  constructor({ onLaunchMatch } = {}) {
+  constructor({ onLaunchMatch, onObstacleModeChange } = {}) {
     this.onLaunchMatch = onLaunchMatch;
+    this.onObstacleModeChange = onObstacleModeChange;
     this.isOpen = true;
 
     // Default player loadout state
@@ -39,6 +40,7 @@ export class PreGameLobby {
     this.matchSettings = {
       gameSpeed: CONFIG.GAME_SPEED_MULTIPLIER || 1.0,
       difficulty: CONFIG.DIFFICULTY || 'normal',
+      obstacleMode: CONFIG.OBSTACLE_MODE || 'normal',
       sharkCount: CONFIG.SHARK_COUNT !== undefined ? CONFIG.SHARK_COUNT : 5,
       sharkSpeed: CONFIG.SHARK_SPEED_MULTIPLIER || 1.0
     };
@@ -127,6 +129,21 @@ export class PreGameLobby {
         data-difficulty="${opt.id}"
       >${opt.label}</button>
     `).join('');
+
+    const obstacleModeOptions = [
+      { id: 'none', label: '🌊 None (Open Ocean)' },
+      { id: 'low', label: '🏝️ Low (Sparse)' },
+      { id: 'normal', label: '🌴 Normal (Archipelago)' },
+      { id: 'dense', label: '🪸 Dense (Reef Maze)' }
+    ];
+    const obstacleModeBtnsHTML = obstacleModeOptions.map((opt) => `
+      <button
+        type="button"
+        class="setting-pill-btn obstacle-preset-btn ${opt.id === this.matchSettings.obstacleMode ? 'active' : ''}"
+        data-obstacle-mode="${opt.id}"
+      >${opt.label}</button>
+    `).join('');
+    const currentObsPreset = CONFIG.OBSTACLE_DENSITY_PRESETS?.[this.matchSettings.obstacleMode] || { label: 'Normal (Tropical Archipelago)' };
 
     this.backdrop.innerHTML = `
       <div class="lobby-modal-shell">
@@ -251,7 +268,18 @@ export class PreGameLobby {
                 </div>
               </div>
 
-              <!-- 3. Shark Count & 4. Shark Speed Sliders -->
+              <!-- 3. 🏝️ Obstacles Mode (None, Low, Normal, Dense) -->
+              <div class="setting-control-block">
+                <div class="setting-label-row">
+                  <span>🏝️ Obstacles Mode (Islands, Trees & Reefs)</span>
+                  <strong id="lobby-obstacle-val-label">${currentObsPreset.label}</strong>
+                </div>
+                <div class="setting-pills-grid four-cols" id="lobby-obstacle-mode-group">
+                  ${obstacleModeBtnsHTML}
+                </div>
+              </div>
+
+              <!-- 4. Shark Count & 5. Shark Speed Sliders -->
               <div class="setting-sliders-row">
                 <div class="setting-slider-box">
                   <div class="setting-label-row">
@@ -381,45 +409,44 @@ export class PreGameLobby {
     this.previewRenderer.setSize(320, 220);
     this.previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.previewRenderer.toneMappingExposure = 1.25;
+    this.previewRenderer.toneMappingExposure = 1.05;
 
     const pmremGenerator = new THREE.PMREMGenerator(this.previewRenderer);
     this.previewScene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
 
-    const hemi = new THREE.HemisphereLight(0xfff5d6, 0x1ca3ec, 1.4);
-    const dirLight = new THREE.DirectionalLight(0xfff0c2, 2.4);
+    const hemi = new THREE.HemisphereLight(0xffefb8, 0x063b5a, 1.35);
+    const dirLight = new THREE.DirectionalLight(0xffd175, 2.6);
     dirLight.position.set(6, 11, 8);
     this.previewScene.add(hemi, dirLight);
 
-    // Sample curved territory mat patch underneath the 1.8x preview octopus
+    // Sample curved territory mat patch underneath the 1.8x preview octopus using smooth SDF aWeight
     const patchRadius = 32;
-    const patchGeo = new THREE.SphereGeometry(patchRadius, 36, 24, 0, Math.PI * 2, 0, 0.22);
-    const nonIndexedPatch = patchGeo.index ? patchGeo.toNonIndexed() : patchGeo;
-    nonIndexedPatch.translate(0, -patchRadius + 0.15, 0);
-    nonIndexedPatch.computeVertexNormals();
+    const patchGeo = new THREE.SphereGeometry(patchRadius, 48, 32, 0, Math.PI * 2, 0, 0.22);
+    patchGeo.translate(0, -patchRadius + 0.15, 0);
+    patchGeo.computeVertexNormals();
 
-    this.previewPatchVertexCount = nonIndexedPatch.attributes.position.count;
+    this.previewPatchVertexCount = patchGeo.attributes.position.count;
     this.patchColorArr = new Float32Array(this.previewPatchVertexCount * 3);
-    this.patchAlphaArr = new Float32Array(this.previewPatchVertexCount).fill(1.0);
-    this.patchBorderArr = new Float32Array(this.previewPatchVertexCount);
+    this.patchWeightArr = new Float32Array(this.previewPatchVertexCount);
     this.patchPatternArr = new Float32Array(this.previewPatchVertexCount);
     this.patchBorderTypeArr = new Float32Array(this.previewPatchVertexCount);
 
-    const posAttr = nonIndexedPatch.attributes.position;
+    const posAttr = patchGeo.attributes.position;
     for (let v = 0; v < this.previewPatchVertexCount; v++) {
       const vx = posAttr.getX(v);
       const vz = posAttr.getZ(v);
       const r = Math.hypot(vx, vz);
-      this.patchBorderArr[v] = r > 5.4 ? 1.0 : 0.0;
+      // Smooth radial SDF weight [0..1] so fillMask = smoothstep(0.46, 0.50, vWeight)
+      // and borderMask = smoothstep(0.41, 0.47, vWeight) - smoothstep(0.48, 0.54, vWeight)
+      this.patchWeightArr[v] = THREE.MathUtils.clamp(1.0 - Math.pow(r / 5.75, 2.6) * 0.58, 0.0, 1.0);
     }
 
-    nonIndexedPatch.setAttribute('aColor', new THREE.BufferAttribute(this.patchColorArr, 3));
-    nonIndexedPatch.setAttribute('aAlpha', new THREE.BufferAttribute(this.patchAlphaArr, 1));
-    nonIndexedPatch.setAttribute('aBorder', new THREE.BufferAttribute(this.patchBorderArr, 1));
-    nonIndexedPatch.setAttribute('aPattern', new THREE.BufferAttribute(this.patchPatternArr, 1));
-    nonIndexedPatch.setAttribute('aBorderType', new THREE.BufferAttribute(this.patchBorderTypeArr, 1));
+    patchGeo.setAttribute('aColor', new THREE.BufferAttribute(this.patchColorArr, 3));
+    patchGeo.setAttribute('aWeight', new THREE.BufferAttribute(this.patchWeightArr, 1));
+    patchGeo.setAttribute('aPattern', new THREE.BufferAttribute(this.patchPatternArr, 1));
+    patchGeo.setAttribute('aBorderType', new THREE.BufferAttribute(this.patchBorderTypeArr, 1));
 
-    this.previewPatchGeo = nonIndexedPatch;
+    this.previewPatchGeo = patchGeo;
     this.previewPatchMat = createTerritoryMaterial(new THREE.Vector3(0.5, 0.8, 0.4).normalize());
     this.previewPatchMesh = new THREE.Mesh(this.previewPatchGeo, this.previewPatchMat);
     this.previewScene.add(this.previewPatchMesh);
@@ -459,6 +486,19 @@ export class PreGameLobby {
     const tagEl = document.getElementById('preview-loadout-tag');
     if (tagEl) {
       tagEl.textContent = `${figObj.icon} ${figObj.name} • ${patObj.icon} ${patObj.name} • ${brdObj.icon} ${brdObj.name}`;
+    }
+  }
+
+  syncObstacleModeUI(modeId) {
+    if (!modeId || !CONFIG.OBSTACLE_DENSITY_PRESETS?.[modeId]) return;
+    this.matchSettings.obstacleMode = modeId;
+    const obsBtns = this.backdrop.querySelectorAll('.obstacle-preset-btn');
+    obsBtns.forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-obstacle-mode') === modeId);
+    });
+    const obsLabel = document.getElementById('lobby-obstacle-val-label');
+    if (obsLabel) {
+      obsLabel.textContent = CONFIG.OBSTACLE_DENSITY_PRESETS[modeId].label;
     }
   }
 
@@ -539,6 +579,18 @@ export class PreGameLobby {
         diffBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this.matchSettings.difficulty = btn.getAttribute('data-difficulty') || 'normal';
+      });
+    });
+
+    // 🏝️ Obstacles Mode Selector (None, Low, Normal, Dense)
+    const obsBtns = this.backdrop.querySelectorAll('.obstacle-preset-btn');
+    obsBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const modeId = btn.getAttribute('data-obstacle-mode') || 'normal';
+        this.syncObstacleModeUI(modeId);
+        if (this.onObstacleModeChange) {
+          this.onObstacleModeChange(modeId);
+        }
       });
     });
 

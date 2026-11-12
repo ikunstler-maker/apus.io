@@ -39,14 +39,14 @@ class ApusGame {
   _initRendererAndScene() {
     this.scene = new THREE.Scene();
 
-    // Warm Sunny Sky Background & Golden Horizon Fog (NO Black Space!)
-    this.scene.background = new THREE.Color('#87CEEB');
-    this.scene.fog = new THREE.FogExp2('#a8e6ff', 0.0025);
+    // Deep Sunny Horizon Backdrop & ZERO Pale Fog (Warm golden rim handled by atmosphere shader at back edge)
+    this.scene.background = new THREE.Color('#094a6e');
+    this.scene.fog = null;
 
     this.camera = new THREE.PerspectiveCamera(
       CONFIG.CAMERA_FOV,
       window.innerWidth / window.innerHeight,
-      5,
+      2,
       650
     );
 
@@ -59,7 +59,7 @@ class ApusGame {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.06;
+    this.renderer.toneMappingExposure = 1.0;
 
     // Studio Environment Lighting (RoomEnvironment) for rich clay specular reflections
     const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
@@ -67,16 +67,16 @@ class ApusGame {
 
     this.container.appendChild(this.renderer.domElement);
 
-    // Post-Processing (EffectComposer + subtle UnrealBloomPass without white washout)
+    // Post-Processing (EffectComposer + subtle UnrealBloomPass for 2.2x neon territory tube borders)
     this.composer = new EffectComposer(this.renderer);
     const renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(renderPass);
 
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.14,
-      0.4,
-      0.92
+      0.12,
+      0.38,
+      0.88
     );
     this.composer.addPass(this.bloomPass);
   }
@@ -123,7 +123,7 @@ class ApusGame {
       this.territoryGrid
     );
 
-    // 6. Real-Time Nickname Leaderboard, Emergency Reset/Unstuck [R], Ghost Realm Banner & Nameplates HUD
+    // 6. Real-Time Nickname Leaderboard, Emergency Reset/Unstuck [R], Obstacles Toggle, Ghost Realm Banner & Nameplates HUD
     this.hud = new HUD(
       this.player,
       this.territoryGrid,
@@ -133,7 +133,8 @@ class ApusGame {
         onRespawnRequest: () => this.respawnPlayer(),
         onResetUnstuckRequest: () => this.resetUnstuckPlayer(),
         onOpenCustomizeRequest: () => this.lobby.open(),
-        onResetMatchRequest: () => this.resetMatch()
+        onResetMatchRequest: () => this.resetMatch(),
+        onObstacleModeChange: (modeId) => this.setObstacleMode(modeId, true)
       }
     );
 
@@ -159,12 +160,35 @@ class ApusGame {
     this.lobby = new PreGameLobby({
       onLaunchMatch: ({ loadout, roomConfig, matchSettings }) => {
         this._applyLobbyLaunch(loadout, roomConfig, matchSettings);
+      },
+      onObstacleModeChange: (modeId) => {
+        this.setObstacleMode(modeId, false);
       }
     });
   }
 
   /**
-   * Applies Match & Hazard Settings (`gameSpeed`, `difficulty`, `sharkCount`, `sharkSpeed`).
+   * Dynamically switches or disables static obstacles on the sphere ('none' | 'low' | 'normal' | 'dense')
+   * in real time without crashing the current match.
+   */
+  setObstacleMode(modeId, showToast = true) {
+    const validMode = CONFIG.OBSTACLE_DENSITY_PRESETS?.[modeId] ? modeId : 'normal';
+    const preset = CONFIG.OBSTACLE_DENSITY_PRESETS[validMode];
+    const changed = this.sphereWorld.obstacleMode !== validMode;
+
+    if (changed) {
+      this.sphereWorld.setObstacleMode(validMode, this.allContenders);
+    }
+    this.hud?.syncObstacleModeUI(validMode);
+    this.lobby?.syncObstacleModeUI(validMode);
+
+    if (showToast && this.hud) {
+      this.hud.showToast(`${preset.icon} Obstacles Mode: ${preset.label}`, '#ffd175');
+    }
+  }
+
+  /**
+   * Applies Match & Hazard Settings (`gameSpeed`, `difficulty`, `obstacleMode`, `sharkCount`, `sharkSpeed`).
    */
   _applyMatchSettings(matchSettings = {}, showNotification = false) {
     if (!matchSettings) return;
@@ -174,6 +198,9 @@ class ApusGame {
     if (matchSettings.difficulty && CONFIG.DIFFICULTY_PRESETS[matchSettings.difficulty]) {
       CONFIG.DIFFICULTY = matchSettings.difficulty;
     }
+    if (matchSettings.obstacleMode && CONFIG.OBSTACLE_DENSITY_PRESETS?.[matchSettings.obstacleMode]) {
+      this.setObstacleMode(matchSettings.obstacleMode, false);
+    }
     const sharkCount = matchSettings.sharkCount !== undefined ? Number(matchSettings.sharkCount) : CONFIG.SHARK_COUNT;
     const sharkSpeed = matchSettings.sharkSpeed !== undefined ? Number(matchSettings.sharkSpeed) : CONFIG.SHARK_SPEED_MULTIPLIER;
 
@@ -181,9 +208,10 @@ class ApusGame {
 
     if (showNotification) {
       const diffObj = CONFIG.DIFFICULTY_PRESETS[CONFIG.DIFFICULTY] || CONFIG.DIFFICULTY_PRESETS.normal;
+      const obsObj = CONFIG.OBSTACLE_DENSITY_PRESETS[CONFIG.OBSTACLE_MODE] || CONFIG.OBSTACLE_DENSITY_PRESETS.normal;
       this.hud.showToast(
-        `⚙️ ${CONFIG.GAME_SPEED_MULTIPLIER.toFixed(1)}x Speed • ${diffObj.label} • 🦈 ${CONFIG.SHARK_COUNT} Sharks`,
-        '#70f3ff'
+        `⚙️ ${CONFIG.GAME_SPEED_MULTIPLIER.toFixed(1)}x • ${diffObj.label} • ${obsObj.icon} ${obsObj.label} • 🦈 ${CONFIG.SHARK_COUNT}`,
+        '#ffd175'
       );
     }
   }

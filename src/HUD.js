@@ -38,6 +38,18 @@ export class HUD {
     }
   }
 
+  syncObstacleModeUI(modeId) {
+    if (!modeId || !CONFIG.OBSTACLE_DENSITY_PRESETS?.[modeId]) return;
+    const obsModeBtns = this.root.querySelectorAll('.hud-obs-mode-btn');
+    obsModeBtns.forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-obstacle-mode') === modeId);
+    });
+    const labelEl = document.getElementById('hud-obs-mode-label');
+    if (labelEl) {
+      labelEl.textContent = CONFIG.OBSTACLE_DENSITY_PRESETS[modeId].label;
+    }
+  }
+
   _injectDOM() {
     this.root = document.getElementById('hud-root');
     if (!this.root) {
@@ -46,14 +58,33 @@ export class HUD {
       document.body.appendChild(this.root);
     }
 
+    const currentObsMode = CONFIG.OBSTACLE_MODE || 'normal';
+    const hudObsModes = [
+      { id: 'none', label: '🌊 None', title: 'None (Clean Open Ocean — 0 Obstacles)' },
+      { id: 'low', label: '🏝️ Low', title: 'Low (35% Sparse Islands)' },
+      { id: 'normal', label: '🌴 Normal', title: 'Normal (100% Tropical Archipelago)' },
+      { id: 'dense', label: '🪸 Dense', title: 'Dense (150% Reef Maze)' }
+    ];
+    const hudObsBtnsHTML = hudObsModes.map((m) => `
+      <button
+        type="button"
+        class="hud-obs-mode-btn ${m.id === currentObsMode ? 'active' : ''}"
+        data-obstacle-mode="${m.id}"
+        title="${m.title}"
+      >${m.label}</button>
+    `).join('');
+
     this.root.innerHTML = `
+      <!-- Subtle Cinematic Corner Vignette (0.22 darkness at screen corners) -->
+      <div class="hud-vignette-overlay" aria-hidden="true"></div>
+
       <!-- Warm Diagonal Golden Sunbeam Overlay (God Rays from Top-Left) -->
       <div class="hud-sunbeams-overlay" aria-hidden="true"></div>
 
       <!-- Floating 3D-to-HTML Nameplates Layer -->
       <div class="hud-nameplates-layer" id="hud-nameplates-layer"></div>
 
-      <!-- Top-Left Brand, Room Key, Emergency Reset/Unstuck [R] & Local Player Telemetry -->
+      <!-- Top-Left Brand, Room Key, Emergency Reset/Unstuck [R], Obstacles Toggle & Local Player Telemetry -->
       <header class="hud-panel hud-brand-panel" id="hud-telemetry-panel">
         <div class="brand-row">
           <div class="brand-badge">🐙</div>
@@ -76,6 +107,17 @@ export class HUD {
           >
             🔄 Reset / Unstuck <kbd>[R]</kbd>
           </button>
+        </div>
+
+        <!-- Always-Accessible In-Game 🏝️ Obstacles Mode Selector (None / Low / Normal / Dense) -->
+        <div class="hud-obstacles-selector-block">
+          <div class="hud-obs-label-row">
+            <span>🏝️ Obstacles Mode:</span>
+            <strong id="hud-obs-mode-label">${CONFIG.OBSTACLE_DENSITY_PRESETS?.[currentObsMode]?.label || 'Normal'}</strong>
+          </div>
+          <div class="hud-obs-pills-row" id="hud-obs-pills-row">
+            ${hudObsBtnsHTML}
+          </div>
         </div>
 
         <!-- Room Key Badge (Click to Copy) + Live Ghosts Haunting Counter -->
@@ -263,6 +305,18 @@ export class HUD {
     if (this.elResetUnstuckBtn) {
       this.elResetUnstuckBtn.addEventListener('click', triggerResetUnstuck);
     }
+
+    // In-Game 🏝️ Obstacles Mode Selector (None / Low / Normal / Dense)
+    const obsModeBtns = this.root.querySelectorAll('.hud-obs-mode-btn');
+    obsModeBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const modeId = btn.getAttribute('data-obstacle-mode') || 'normal';
+        this.syncObstacleModeUI(modeId);
+        if (this.callbacks.onObstacleModeChange) {
+          this.callbacks.onObstacleModeChange(modeId);
+        }
+      });
+    });
 
     // Ghost Realm Banner Buttons: Respawn Now [Space] & Customize Loadout [C]
     this.elGhostRespawnBtn.addEventListener('click', () => {
@@ -712,9 +766,9 @@ export class HUD {
     ctx.clearRect(0, 0, w, h);
 
     const grad = ctx.createRadialGradient(cx - globeR * 0.28, cy - globeR * 0.28, globeR * 0.1, cx, cy, globeR);
-    grad.addColorStop(0, '#48cae4');
-    grad.addColorStop(0.55, '#00b4d8');
-    grad.addColorStop(1, '#064273');
+    grad.addColorStop(0, '#2ec4b6');
+    grad.addColorStop(0.55, '#086988');
+    grad.addColorStop(1, '#063b5a');
 
     ctx.beginPath();
     ctx.arc(cx, cy, globeR, 0, Math.PI * 2);

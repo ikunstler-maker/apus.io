@@ -144,6 +144,19 @@ export class Contender {
     });
     this.mesh.add(this.avatar.root);
 
+    // Rich soft dark-teal drop shadow disc underneath the octopus on the water/sand surface (shadowOpacity = 0.45)
+    const shadowGeo = new THREE.CircleGeometry(2.65, 28);
+    shadowGeo.rotateX(-Math.PI / 2);
+    this.shadowMat = new THREE.MeshBasicMaterial({
+      color: 0x042438,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false
+    });
+    this.shadowDisc = new THREE.Mesh(shadowGeo, this.shadowMat);
+    this.shadowDisc.position.set(-0.35, -0.42, -0.25);
+    this.mesh.add(this.shadowDisc);
+
     // Spawn immunity / status aura ring scaled for 1.8x octopus tentacles (non-additive to prevent glare)
     const shieldGeo = new THREE.RingGeometry(3.2, 3.75, 36);
     shieldGeo.rotateX(-Math.PI / 2);
@@ -797,7 +810,7 @@ export class Contender {
 
 /**
  * Local Player Controller:
- * Handles Wide Isometric Spherical Camera Rig (FOV = 35, Elevation = 48 deg, Distance = 92 + wheel zoom),
+ * Handles Closer Diorama Spherical Camera Rig (FOV = 26, Tilt = 54 deg, Distance = 30 + wheel zoom),
  * multi-modal steering input, and Ghost Realm `[E]` / `Click` Boo Emote triggers.
  */
 export class PlayerController extends Contender {
@@ -809,7 +822,7 @@ export class PlayerController extends Contender {
     this.camNormal = new THREE.Vector3(0, 0, 1);
     this.camNorth = new THREE.Vector3(0, 1, 0);
     this.camEast = new THREE.Vector3(1, 0, 0);
-    this.cameraDistance = CONFIG.CAMERA_DISTANCE || 92;
+    this.cameraDistance = CONFIG.CAMERA_DISTANCE || 30;
 
     this.keys = {
       left: false,
@@ -898,14 +911,14 @@ export class PlayerController extends Contender {
       }
     });
 
-    // Mouse-wheel zoom to adjust camera distance smoothly between [55..145]
+    // Mouse-wheel zoom to adjust camera distance smoothly between [22..145]
     this.domElement.addEventListener(
       'wheel',
       (e) => {
-        const minD = CONFIG.CAMERA_MIN_DISTANCE || 55;
+        const minD = CONFIG.CAMERA_MIN_DISTANCE || 22;
         const maxD = CONFIG.CAMERA_MAX_DISTANCE || 145;
         this.cameraDistance = THREE.MathUtils.clamp(
-          this.cameraDistance + Math.sign(e.deltaY) * 6.0,
+          this.cameraDistance + Math.sign(e.deltaY) * 3.5,
           minD,
           maxD
         );
@@ -993,10 +1006,10 @@ export class PlayerController extends Contender {
   }
 
   /**
-   * Wide Isometric Spherical Camera Framing:
-   * Uses `camera.fov = 35`, elevation angle `48 deg` above the local tangent plane
-   * (`42 deg` polar tilt from the outward normal), and distance `92` units so the wide
-   * spherical arena, islands, sharks, whirlpools, and rival contenders are visible at once!
+   * Closer Diorama Spherical Camera Framing:
+   * Uses `camera.fov = 26`, tilt angle `60 deg` from the surface normal (`elevation = 30 deg`),
+   * and distance `30` units so the curved horizon sits at ~8.7% from the top of the viewport
+   * and the rich ocean fills ~95% of the screen!
    */
   updateCamera(dt) {
     const lerpFactor = Math.min(1.0, dt * CONFIG.CAMERA_SMOOTHNESS);
@@ -1005,10 +1018,10 @@ export class PlayerController extends Contender {
     this.camNorth.sub(this.camNormal.clone().multiplyScalar(this.camNorth.dot(this.camNormal))).normalize();
     this.camEast.crossVectors(this.camNorth, this.camNormal).normalize();
 
-    const elevationDeg = CONFIG.CAMERA_ELEVATION_DEG !== undefined ? CONFIG.CAMERA_ELEVATION_DEG : 48;
-    const tiltFromNormalDeg = 90 - elevationDeg; // 42 degrees from surface normal = 48 deg elevation
+    const elevationDeg = CONFIG.CAMERA_ELEVATION_DEG !== undefined ? CONFIG.CAMERA_ELEVATION_DEG : 30;
+    const tiltFromNormalDeg = 90 - elevationDeg; // 60 degrees from surface normal => horizon at ~8.7% from top
     const tiltRad = THREE.MathUtils.degToRad(tiltFromNormalDeg);
-    const dist = this.cameraDistance || CONFIG.CAMERA_DISTANCE || 92;
+    const dist = this.cameraDistance || CONFIG.CAMERA_DISTANCE || 30;
 
     const camOffsetDir = new THREE.Vector3()
       .addScaledVector(this.camNormal, Math.cos(tiltRad))

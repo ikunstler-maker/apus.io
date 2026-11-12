@@ -4,9 +4,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
 
 :root {
-  --bg-deep: #87CEEB;
-  --glass-bg: rgba(6, 28, 52, 0.76);
-  --glass-bg-strong: rgba(5, 22, 42, 0.92);
+  --bg-deep: #063b5a;
+  --glass-bg: rgba(5, 24, 44, 0.80);
+  --glass-bg-strong: rgba(4, 18, 36, 0.93);
   --glass-border: rgba(140, 235, 255, 0.28);
   --glass-highlight: rgba(255, 255, 255, 0.12);
   --text-primary: #f2fbff;
@@ -1421,8 +1421,21 @@ kbd {
 }
 
 /* ============================================================================
-   DIAGONAL GOLDEN SUNBEAM OVERLAY (GOD RAYS FROM TOP-LEFT)
+   SUBTLE CINEMATIC VIGNETTE (0.22 CORNER DARKNESS) & GOLDEN SUNBEAM OVERLAY
    ============================================================================ */
+.hud-vignette-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  background: radial-gradient(
+    circle at 50% 52%,
+    transparent 56%,
+    rgba(2, 16, 30, 0.12) 78%,
+    rgba(1, 10, 20, 0.22) 100%
+  );
+}
+
 .hud-sunbeams-overlay {
   position: fixed;
   inset: 0;
@@ -1431,16 +1444,75 @@ kbd {
   background:
     linear-gradient(
       128deg,
-      rgba(255, 245, 195, 0.22) 0%,
-      rgba(255, 236, 170, 0.08) 16%,
-      transparent 30%,
-      rgba(255, 242, 185, 0.14) 38%,
-      transparent 52%,
-      rgba(255, 238, 175, 0.09) 60%,
-      transparent 76%
+      rgba(255, 209, 117, 0.20) 0%,
+      rgba(255, 218, 138, 0.08) 14%,
+      transparent 28%,
+      rgba(255, 209, 117, 0.13) 36%,
+      transparent 49%,
+      rgba(255, 224, 150, 0.09) 58%,
+      transparent 74%
     ),
-    radial-gradient(circle at 8% 6%, rgba(255, 246, 200, 0.28), transparent 48%);
+    radial-gradient(circle at 24% 4%, rgba(255, 218, 135, 0.24), transparent 44%);
   mix-blend-mode: screen;
+}
+
+/* ============================================================================
+   IN-GAME HUD: 🏝️ OBSTACLES MODE QUICK SELECTOR (NONE / LOW / NORMAL / DENSE)
+   ============================================================================ */
+.hud-obstacles-selector-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(2, 14, 28, 0.56);
+  border: 1px solid rgba(112, 243, 255, 0.18);
+  border-radius: 9px;
+  padding: 6px 8px;
+}
+
+.hud-obs-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+}
+
+.hud-obs-label-row strong {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--accent-gold);
+}
+
+.hud-obs-pills-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.hud-obs-mode-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 4px 3px;
+  font-family: var(--font-sans);
+  font-size: 0.63rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.14s ease;
+  white-space: nowrap;
+}
+
+.hud-obs-mode-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+}
+
+.hud-obs-mode-btn.active {
+  background: rgba(0, 245, 212, 0.22);
+  border-color: var(--accent-aqua);
+  color: #ffffff;
+  box-shadow: 0 0 8px rgba(0, 245, 212, 0.25);
 }
 
 /* ============================================================================
@@ -1582,5 +1654,3 @@ kbd {
   color: var(--text-secondary);
   opacity: 0.85;
 }
-
-

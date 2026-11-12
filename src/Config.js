@@ -16,7 +16,7 @@ export const CONFIG = {
 
   // Gameplay Rules & Toggles
   ALLOW_SELF_CROSS: false,        // Crossing one's own active trail severs it and triggers elimination
-  STRICT_OBSTACLE_CRASH: false,   // Solid obstacles NEVER kill or break trails (always smooth sliding collision)
+  STRICT_OBSTACLE_CRASH: false,   // Obstacles are completely non-blocking scenery: zero stoppage, trail never breaks
   SHARK_LETHAL_BITE: false,       // Shark bites ONLY snap active trail & never wipe owned territory
   DOMINATION_TARGET: 35.0,        // 35% of navigable sphere surface triggers Victory Celebration
 

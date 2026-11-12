@@ -365,16 +365,15 @@ export class TerritoryGrid {
       const c = cells[i];
       if (this.obstacle[c] === 0) {
         this.obstacle[c] = 1;
-        this.navigableCellCount = Math.max(1, this.navigableCellCount - 1);
       }
     }
   }
 
   /**
    * Updates `this.owner[cellIdx]` and synchronizes `this.ownedCellsSets` + `this.ownerCounts`.
+   * Obstacles do NOT block territory ownership so loops across or around islands capture cleanly!
    */
   _setCellOwner(cellIdx, newOwnerId, brushWeight = 1.0) {
-    if (this.obstacle[cellIdx] !== 0) return false;
     const prevOwner = this.owner[cellIdx];
     if (prevOwner === newOwnerId) {
       if (newOwnerId >= 0 && brushWeight > this.cellBrushWeight[cellIdx]) {
@@ -425,28 +424,10 @@ export class TerritoryGrid {
 
   /**
    * Claims a circular disk of cells for `contenderId` using a smooth radial paint brush.
-   * If `contenderId`'s center lands near an obstacle, also claims unobstructed cells around it.
    */
   claimDisk(posOrNormal, worldRadius, contenderId, syncGPU = true) {
-    const { newlyClaimed, cells } = this._stampRadialBrush(posOrNormal, worldRadius, contenderId);
-    let changed = newlyClaimed > 0;
-    let claimedCount = 0;
-    for (let i = 0; i < cells.length; i++) {
-      if (this.owner[cells[i]] === contenderId) {
-        claimedCount++;
-      }
-    }
-
-    // Fallback: if all cells in `worldRadius` were marked obstacle, force-claim nearest cell ignoring obstacle flag
-    if (claimedCount === 0 && cells.length > 0) {
-      for (let i = 0; i < Math.min(cells.length, 16); i++) {
-        const c = cells[i];
-        this.obstacle[c] = 0;
-        if (this._setCellOwner(c, contenderId, 1.0)) {
-          changed = true;
-        }
-      }
-    }
+    const { newlyClaimed } = this._stampRadialBrush(posOrNormal, worldRadius, contenderId);
+    const changed = newlyClaimed > 0;
 
     if (changed && syncGPU) {
       this.syncBuffersToGPU();
@@ -457,6 +438,7 @@ export class TerritoryGrid {
   /**
    * Stamps active trail cells into `this.trailOwner` and `this.activeTrailCellsSets[contenderId]`
    * STRICTLY SEPARATELY from `this.owner` / `ownedCellsSets`!
+   * Moving across obstacles never skips cells, ensuring unbroken trails everywhere.
    */
   stampTrailSegment(prevPos, currPos, contenderId, worldWidth, claimImmediately = false) {
     const dist = prevPos.distanceTo(currPos);
@@ -473,7 +455,6 @@ export class TerritoryGrid {
       const cells = this.getCellsInRadius(tempVec, brushRadius);
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        if (this.obstacle[c] !== 0) continue;
         this.trailOwner[c] = contenderId;
         if (trailSet) trailSet.add(c);
         if (claimImmediately && this._setCellOwner(c, contenderId, 0.95)) {

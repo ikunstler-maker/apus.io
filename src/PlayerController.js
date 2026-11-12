@@ -552,62 +552,14 @@ export class Contender {
   }
 
   /**
-   * NON-LETHAL SOLID OBSTACLES (Smooth Tangential Sliding Resolution — Zero Deaths):
-   * Colliding with rocks, giant trees, or coral reefs NEVER kills the player,
-   * NEVER resets the player, and NEVER breaks their active trail.
-   * Projects the octopus radially outward onto `R_obs + R_player` and slides its forward
-   * velocity vector smoothly along the obstacle's tangent perimeter.
+   * NON-LETHAL, NON-BLOCKING SCENIC OBSTACLES:
+   * When colliding with an obstacle (islands, trees, cliffs, coral reefs), NOTHING happens:
+   * Zero pushback, zero stopping, zero velocity interruption.
+   * The player (and bots) can continue moving safely and uninterruptedly straight through
+   * and across any obstacle without getting stuck, immobilized, or breaking their active trail.
    */
   _handleObstacleCollisions() {
-    const obstacles = this.sphereWorld.obstacles;
-    const R_player = 2.4; // Smooth collision radius for 1.8x Derpy Octopus
-
-    for (let i = 0; i < obstacles.length; i++) {
-      const obs = obstacles[i];
-      const minArcDist = obs.radius + R_player;
-      const minAngle = minArcDist / this.radius;
-
-      const angle = this.normal.angleTo(obs.normal);
-      if (angle < minAngle) {
-        this.avatar.triggerSquashImpulse(0.24);
-
-        // Compute outward radial tangent direction from obstacle center to player
-        const pushDir = new THREE.Vector3()
-          .subVectors(this.normal, obs.normal)
-          .sub(obs.normal.clone().multiplyScalar(this.normal.dot(obs.normal)));
-
-        if (pushDir.lengthSq() < 1e-6) {
-          pushDir.set(1, 0, 0).cross(obs.normal);
-        }
-        pushDir.normalize();
-
-        // Project octopus position radially outward onto the obstacle perimeter (R_obs + R_player)
-        this.normal
-          .copy(obs.normal)
-          .multiplyScalar(Math.cos(minAngle))
-          .addScaledVector(pushDir, Math.sin(minAngle))
-          .normalize();
-
-        // Slide forward velocity vector (heading) smoothly along the obstacle's tangent plane
-        const radialOutward = pushDir
-          .clone()
-          .sub(this.normal.clone().multiplyScalar(pushDir.dot(this.normal)))
-          .normalize();
-
-        const inwardDot = this.heading.dot(radialOutward);
-        if (inwardDot < 0) {
-          // Remove inward radial component so velocity glides tangentially around the obstacle
-          this.heading.addScaledVector(radialOutward, -inwardDot);
-
-          // If hitting almost dead-center head-on, nudge along the tangent direction
-          if (this.heading.lengthSq() < 0.05) {
-            const slideTangent = new THREE.Vector3().crossVectors(this.normal, radialOutward).normalize();
-            this.heading.copy(slideTangent);
-          }
-        }
-        this.heading.sub(this.normal.clone().multiplyScalar(this.heading.dot(this.normal))).normalize();
-      }
-    }
+    // Intentionally empty: obstacles do not block, push, or freeze movement.
   }
 
   _updateTerritoryAndTrail(prevPos, onLoopClosedCallback) {
@@ -710,9 +662,24 @@ export class Contender {
 
       side.crossVectors(nVec, dir).normalize();
 
-      const baseX = nVec.x * (this.radius + 0.42);
-      const baseY = nVec.y * (this.radius + 0.42);
-      const baseZ = nVec.z * (this.radius + 0.42);
+      let islandElev = 0;
+      if (this.sphereWorld && this.sphereWorld.obstacles) {
+        const obstacles = this.sphereWorld.obstacles;
+        for (let o = 0; o < obstacles.length; o++) {
+          const obs = obstacles[o];
+          const arc = nVec.angleTo(obs.normal) * this.radius;
+          if (arc < obs.radius) {
+            const t = 1.0 - (arc / obs.radius);
+            const h = (obs.type === 'ANCIENT_TREE' ? 1.4 : 1.1) * Math.sin(t * Math.PI * 0.5);
+            if (h > islandElev) islandElev = h;
+          }
+        }
+      }
+
+      const r = this.radius + 0.42 + islandElev;
+      const baseX = nVec.x * r;
+      const baseY = nVec.y * r;
+      const baseZ = nVec.z * r;
 
       const vIdx = i * 6;
       posArr[vIdx]     = baseX + side.x * halfW;
@@ -740,12 +707,28 @@ export class Contender {
    * Aligns the 3D DerpyOctopusAvatar to the sphere surface normal (`local +Y`) and heading tangent (`local +Z`)
    * using a strict right-handed orthonormal basis (`det = +1.0`) so the character is 100% upright and volumetric!
    * In Ghost mode, floats `CONFIG.GHOST_FLOAT_OFFSET` (2.5 units) above the water surface!
+   * Seamlessly elevates over sandy island dunes and reefs so movement is 100% smooth and unobstructed.
    */
   _syncVesselTransform(elapsedTime) {
     const isGhost = this.state === 'GHOST';
+
+    let islandElev = 0;
+    if (this.sphereWorld && this.sphereWorld.obstacles) {
+      const obstacles = this.sphereWorld.obstacles;
+      for (let i = 0; i < obstacles.length; i++) {
+        const obs = obstacles[i];
+        const arc = this.normal.angleTo(obs.normal) * this.radius;
+        if (arc < obs.radius) {
+          const t = 1.0 - (arc / obs.radius);
+          const h = (obs.type === 'ANCIENT_TREE' ? 1.8 : (obs.type === 'CORAL_REEF' ? 1.2 : 2.0)) * Math.sin(t * Math.PI * 0.5);
+          if (h > islandElev) islandElev = h;
+        }
+      }
+    }
+
     const floatHeight = isGhost
       ? CONFIG.GHOST_FLOAT_OFFSET + Math.sin(elapsedTime * 3.2 + this.id) * 0.42
-      : 0.68 + Math.sin(elapsedTime * 4.5 + this.id) * 0.16;
+      : 0.68 + islandElev + Math.sin(elapsedTime * 4.5 + this.id) * 0.16;
 
     this.mesh.position.copy(this.normal).multiplyScalar(this.radius + floatHeight);
 

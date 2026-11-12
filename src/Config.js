@@ -39,10 +39,12 @@ export const CONFIG = {
   BROAD_BRUSH_MULTIPLIER: 2.4,    // Extra wide corridor during Wide Wake power-up
   TRAIL_HIT_RADIUS: 1.75,         // Collision radius for severing an active trail
 
-  // Camera Framing (Fill 95-100% of Screen with Ocean)
-  CAMERA_FOV: 28,                 // Narrow isometric FOV = 28 deg
-  CAMERA_ELEVATION_DEG: 58,       // Elevation angle ~58 deg above local tangent plane (32 deg from normal)
-  CAMERA_DISTANCE: 42,            // Close orbit distance (42 units) so turquoise ocean fills 95-100% of screen
+  // Camera Framing (Wide Panoramic Isometric View matching reference screenshot)
+  CAMERA_FOV: 35,                 // Isometric-style panoramic FOV = 35 deg
+  CAMERA_ELEVATION_DEG: 48,       // Elevation angle 48 deg above local tangent plane (42 deg from normal)
+  CAMERA_DISTANCE: 92,            // Panoramic orbit distance (92 units) showing islands, sharks & rivals
+  CAMERA_MIN_DISTANCE: 55,        // Mouse-wheel zoom-in limit
+  CAMERA_MAX_DISTANCE: 145,       // Mouse-wheel zoom-out limit
   CAMERA_SMOOTHNESS: 8.0,         // Smooth damping factor for camera orbit follow
 
   // World Obstacles

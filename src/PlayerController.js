@@ -144,19 +144,19 @@ export class Contender {
     });
     this.mesh.add(this.avatar.root);
 
-    // Spawn immunity / status aura ring scaled for 1.8x octopus tentacles
-    const shieldGeo = new THREE.RingGeometry(3.2, 3.85, 36);
+    // Spawn immunity / status aura ring scaled for 1.8x octopus tentacles (non-additive to prevent glare)
+    const shieldGeo = new THREE.RingGeometry(3.2, 3.75, 36);
     shieldGeo.rotateX(-Math.PI / 2);
     this.shieldMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      color: 0xa8f0ff,
       transparent: true,
       opacity: 0.0,
       side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       depthWrite: false
     });
     this.shieldRing = new THREE.Mesh(shieldGeo, this.shieldMat);
-    this.shieldRing.position.y = 0.45;
+    this.shieldRing.position.y = 0.25;
     this.mesh.add(this.shieldRing);
 
     this.scene.add(this.mesh);
@@ -197,33 +197,31 @@ export class Contender {
   }
 
   /**
-   * Builds wake foam, golden speed-surge particles, and ghostly ectoplasm wisp particles.
+   * Builds 3D spherical wake foam puffs behind the octopus (replacing 2D screen-space point sprites).
    */
   _buildWakeParticles() {
-    this.wakeCount = 34;
-    this.wakePositions = new Float32Array(this.wakeCount * 3);
+    this.wakeCount = 10;
     this.wakeAges = new Float32Array(this.wakeCount);
-    for (let i = 0; i < this.wakeCount; i++) {
-      this.wakeAges[i] = Math.random();
-    }
+    this.wakeBubbles = [];
+    this.wakePoints = new THREE.Group();
 
-    const geo = new THREE.BufferGeometry();
-    this.wakePosAttr = new THREE.BufferAttribute(this.wakePositions, 3);
-    this.wakePosAttr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('position', this.wakePosAttr);
-
-    this.wakeMaterial = new THREE.PointsMaterial({
+    const bubbleGeo = new THREE.SphereGeometry(0.32, 10, 10);
+    this.wakeMaterial = new THREE.MeshStandardMaterial({
       color: 0xffffff,
-      size: 1.85,
+      roughness: 0.35,
+      metalness: 0.02,
       transparent: true,
-      opacity: 0.8,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
+      opacity: 0.72
     });
 
-    this.wakePoints = new THREE.Points(geo, this.wakeMaterial);
-    this.wakePoints.frustumCulled = false;
-    this.wakePoints.renderOrder = 5;
+    for (let i = 0; i < this.wakeCount; i++) {
+      this.wakeAges[i] = i / this.wakeCount;
+      const bubble = new THREE.Mesh(bubbleGeo, this.wakeMaterial);
+      bubble.scale.setScalar(0.01);
+      this.wakePoints.add(bubble);
+      this.wakeBubbles.push(bubble);
+    }
+
     this.scene.add(this.wakePoints);
   }
 
@@ -465,12 +463,12 @@ export class Contender {
       }
 
       if (this.spawnImmunityTimer > 0) {
-        this.shieldMat.color.setHex(0xffffff);
-        this.shieldMat.opacity = 0.45 + 0.3 * Math.sin(elapsedTime * 12.0);
+        this.shieldMat.color.setHex(0xa8f0ff);
+        this.shieldMat.opacity = 0.20 + 0.12 * Math.sin(elapsedTime * 10.0);
         this.shieldRing.rotation.z = elapsedTime * 3.0;
       } else if (this.powerUps.INSTANT_ANCHOR > 0) {
         this.shieldMat.color.setHex(0x4dff91);
-        this.shieldMat.opacity = 0.4 + 0.25 * Math.sin(elapsedTime * 8.0);
+        this.shieldMat.opacity = 0.24 + 0.14 * Math.sin(elapsedTime * 8.0);
       } else {
         this.shieldMat.opacity = 0.0;
       }
@@ -726,63 +724,62 @@ export class Contender {
   }
 
   /**
-   * Aligns the 3D DerpyOctopusAvatar to the sphere surface normal and heading tangent.
+   * Aligns the 3D DerpyOctopusAvatar to the sphere surface normal (`local +Y`) and heading tangent (`local +Z`)
+   * using a strict right-handed orthonormal basis (`det = +1.0`) so the character is 100% upright and volumetric!
    * In Ghost mode, floats `CONFIG.GHOST_FLOAT_OFFSET` (2.5 units) above the water surface!
    */
   _syncVesselTransform(elapsedTime) {
     const isGhost = this.state === 'GHOST';
     const floatHeight = isGhost
       ? CONFIG.GHOST_FLOAT_OFFSET + Math.sin(elapsedTime * 3.2 + this.id) * 0.42
-      : 0.36 + Math.sin(elapsedTime * 4.5 + this.id) * 0.18;
+      : 0.68 + Math.sin(elapsedTime * 4.5 + this.id) * 0.16;
 
     this.mesh.position.copy(this.normal).multiplyScalar(this.radius + floatHeight);
 
-    const right = new THREE.Vector3().crossVectors(this.heading, this.normal).normalize();
-    const rotMat = new THREE.Matrix4().makeBasis(right, this.normal, this.heading);
+    // Right-handed basis: sideX = normal x heading, Y = normal (outward up), Z = heading (forward)
+    const sideX = new THREE.Vector3().crossVectors(this.normal, this.heading).normalize();
+    const rotMat = new THREE.Matrix4().makeBasis(sideX, this.normal, this.heading);
     this.mesh.quaternion.setFromRotationMatrix(rotMat);
 
-    // Banking lean into turns
-    const bankAngle = -this.currentTurnRate * 0.22;
+    // Subtle banking lean into turns
+    const bankAngle = this.currentTurnRate * 0.18;
     this.mesh.rotateZ(bankAngle);
   }
 
   _updateWakeParticles(dt) {
-    const posArr = this.wakePosAttr.array;
     const isGhost = this.state === 'GHOST';
     const isBoost = !isGhost && this.powerUps.SPEED_BOOST > 0;
 
     if (isGhost) {
-      // Ghostly ectoplasm wisp particles trailing behind the floating Ghost Octopus!
       this.wakeMaterial.color.setHex(0x80ffea);
-      this.wakeMaterial.size = 2.15;
-      this.wakeMaterial.opacity = 0.65;
+      this.wakeMaterial.opacity = 0.45;
     } else {
-      this.wakeMaterial.color.setHex(isBoost ? 0xffd147 : 0xffffff);
-      this.wakeMaterial.size = isBoost ? 2.45 : 1.75;
-      this.wakeMaterial.opacity = this.isCloaked() ? 0.15 : 0.78;
+      this.wakeMaterial.color.setHex(isBoost ? 0xffe066 : 0xffffff);
+      this.wakeMaterial.opacity = this.isCloaked() ? 0.12 : 0.68;
     }
 
-    const right = new THREE.Vector3().crossVectors(this.heading, this.normal).normalize();
-    const altitude = isGhost ? this.radius + CONFIG.GHOST_FLOAT_OFFSET + 0.5 : this.radius + 0.45;
+    const sideX = new THREE.Vector3().crossVectors(this.normal, this.heading).normalize();
+    const altitude = isGhost ? this.radius + CONFIG.GHOST_FLOAT_OFFSET + 0.35 : this.radius + 0.38;
 
     for (let i = 0; i < this.wakeCount; i++) {
-      this.wakeAges[i] += dt * (isBoost ? 2.4 : 1.5);
+      this.wakeAges[i] += dt * (isBoost ? 2.2 : 1.4);
+      const bubble = this.wakeBubbles[i];
       if (this.wakeAges[i] >= 1.0) {
         this.wakeAges[i] -= 1.0;
-        const spread = (Math.random() - 0.5) * 3.1;
+        const spread = (Math.random() - 0.5) * 2.4;
         const spawnPos = this.position
           .clone()
-          .addScaledVector(this.heading, -2.5)
-          .addScaledVector(right, spread)
+          .addScaledVector(this.heading, -2.6 - Math.random() * 0.8)
+          .addScaledVector(sideX, spread)
           .normalize()
-          .multiplyScalar(altitude + (isGhost ? (Math.random() - 0.5) * 0.9 : 0));
+          .multiplyScalar(altitude + (isGhost ? (Math.random() - 0.5) * 0.6 : 0));
 
-        posArr[i * 3]     = spawnPos.x;
-        posArr[i * 3 + 1] = spawnPos.y;
-        posArr[i * 3 + 2] = spawnPos.z;
+        bubble.position.copy(spawnPos);
       }
+      const life = this.wakeAges[i];
+      const scale = Math.max(0.05, Math.sin(life * Math.PI) * (isBoost ? 1.25 : 0.95));
+      bubble.scale.setScalar(scale);
     }
-    this.wakePosAttr.needsUpdate = true;
   }
 
   /**
@@ -800,7 +797,7 @@ export class Contender {
 
 /**
  * Local Player Controller:
- * Handles Isometric Spherical Camera Rig (FOV = 28, Elevation = 58 deg, Distance = 42),
+ * Handles Wide Isometric Spherical Camera Rig (FOV = 35, Elevation = 48 deg, Distance = 92 + wheel zoom),
  * multi-modal steering input, and Ghost Realm `[E]` / `Click` Boo Emote triggers.
  */
 export class PlayerController extends Contender {
@@ -812,6 +809,7 @@ export class PlayerController extends Contender {
     this.camNormal = new THREE.Vector3(0, 0, 1);
     this.camNorth = new THREE.Vector3(0, 1, 0);
     this.camEast = new THREE.Vector3(1, 0, 0);
+    this.cameraDistance = CONFIG.CAMERA_DISTANCE || 92;
 
     this.keys = {
       left: false,
@@ -900,6 +898,21 @@ export class PlayerController extends Contender {
       }
     });
 
+    // Mouse-wheel zoom to adjust camera distance smoothly between [55..145]
+    this.domElement.addEventListener(
+      'wheel',
+      (e) => {
+        const minD = CONFIG.CAMERA_MIN_DISTANCE || 55;
+        const maxD = CONFIG.CAMERA_MAX_DISTANCE || 145;
+        this.cameraDistance = THREE.MathUtils.clamp(
+          this.cameraDistance + Math.sign(e.deltaY) * 6.0,
+          minD,
+          maxD
+        );
+      },
+      { passive: true }
+    );
+
     // Click on canvas while in Ghost Mode triggers the goofy Ghost Spin / Boo emote!
     this.domElement.addEventListener('pointerdown', (e) => {
       if (this.state === 'GHOST' && e.button === 0) {
@@ -980,10 +993,10 @@ export class PlayerController extends Contender {
   }
 
   /**
-   * Isometric Spherical Camera Framing:
-   * Uses narrow `camera.fov = 28`, elevation angle `58 deg` above the local tangent plane
-   * (`32 deg` polar tilt from the outward normal), and distance `42` units so the vibrant
-   * turquoise ocean surface fills 95-100% of the screen!
+   * Wide Isometric Spherical Camera Framing:
+   * Uses `camera.fov = 35`, elevation angle `48 deg` above the local tangent plane
+   * (`42 deg` polar tilt from the outward normal), and distance `92` units so the wide
+   * spherical arena, islands, sharks, whirlpools, and rival contenders are visible at once!
    */
   updateCamera(dt) {
     const lerpFactor = Math.min(1.0, dt * CONFIG.CAMERA_SMOOTHNESS);
@@ -992,10 +1005,10 @@ export class PlayerController extends Contender {
     this.camNorth.sub(this.camNormal.clone().multiplyScalar(this.camNorth.dot(this.camNormal))).normalize();
     this.camEast.crossVectors(this.camNorth, this.camNormal).normalize();
 
-    const elevationDeg = CONFIG.CAMERA_ELEVATION_DEG !== undefined ? CONFIG.CAMERA_ELEVATION_DEG : 58;
-    const tiltFromNormalDeg = 90 - elevationDeg; // 32 degrees from surface normal = 58 deg elevation
+    const elevationDeg = CONFIG.CAMERA_ELEVATION_DEG !== undefined ? CONFIG.CAMERA_ELEVATION_DEG : 48;
+    const tiltFromNormalDeg = 90 - elevationDeg; // 42 degrees from surface normal = 48 deg elevation
     const tiltRad = THREE.MathUtils.degToRad(tiltFromNormalDeg);
-    const dist = CONFIG.CAMERA_DISTANCE;
+    const dist = this.cameraDistance || CONFIG.CAMERA_DISTANCE || 92;
 
     const camOffsetDir = new THREE.Vector3()
       .addScaledVector(this.camNormal, Math.cos(tiltRad))

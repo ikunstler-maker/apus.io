@@ -728,11 +728,11 @@ export class HazardsAndBonuses {
       shark.heading.sub(shark.normal.clone().multiplyScalar(shark.heading.dot(shark.normal))).normalize();
       shark.position.copy(shark.normal).multiplyScalar(this.radius);
 
-      // Sync shark mesh orientation + swimming tail sway
+      // Sync shark mesh orientation (right-handed basis: det = +1) + swimming tail sway
       const sway = Math.sin(elapsedTime * (shark.isChasing ? 14.0 : 8.0) + shark.id) * 0.14;
       shark.mesh.position.copy(shark.position);
-      const right = new THREE.Vector3().crossVectors(shark.heading, shark.normal).normalize();
-      const rotMat = new THREE.Matrix4().makeBasis(right, shark.normal, shark.heading);
+      const sideX = new THREE.Vector3().crossVectors(shark.normal, shark.heading).normalize();
+      const rotMat = new THREE.Matrix4().makeBasis(sideX, shark.normal, shark.heading);
       shark.mesh.quaternion.setFromRotationMatrix(rotMat);
       shark.mesh.rotateY(sway);
 

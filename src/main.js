@@ -59,7 +59,7 @@ class ApusGame {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMappingExposure = 1.06;
 
     // Studio Environment Lighting (RoomEnvironment) for rich clay specular reflections
     const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
@@ -67,16 +67,16 @@ class ApusGame {
 
     this.container.appendChild(this.renderer.domElement);
 
-    // Post-Processing (EffectComposer + UnrealBloomPass)
+    // Post-Processing (EffectComposer + subtle UnrealBloomPass without white washout)
     this.composer = new EffectComposer(this.renderer);
     const renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(renderPass);
 
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.35,
-      0.65,
-      0.78
+      0.14,
+      0.4,
+      0.92
     );
     this.composer.addPass(this.bloomPass);
   }

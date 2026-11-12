@@ -375,13 +375,14 @@ export function createTrailRibbonMaterial(baseColor = new THREE.Color(0x00f5d4))
       void main() {
         // Distance from ribbon centerline (vUv.x == 0.5)
         float distFromCenter = abs(vUv.x - 0.5) * 2.0;
-        // Bright neon white-tinted core along center + saturated outer glow
-        float coreMask = 1.0 - smoothstep(0.0, 0.42, distFromCenter);
-        float edgeFade = 1.0 - smoothstep(0.68, 1.0, distFromCenter);
+        // 3D cylindrical cross-section shading so trail looks like a plump 3D paint tube
+        float cylHeight = sqrt(max(0.0, 1.0 - distFromCenter * distFromCenter));
+        float coreSpec = pow(cylHeight, 4.0);
+        float edgeFade = 1.0 - smoothstep(0.75, 1.0, distFromCenter);
 
-        float pulse = 0.9 + 0.1 * sin(vUv.y * 24.0 - uTime * 8.0);
-        vec3 coreColor = mix(uColor * 1.35, vec3(1.0, 1.0, 1.0), 0.72);
-        vec3 col = mix(uColor * 1.15, coreColor, coreMask * pulse);
+        float pulse = 0.92 + 0.08 * sin(vUv.y * 20.0 - uTime * 7.0);
+        vec3 shadedPaint = uColor * (0.62 + 0.48 * cylHeight);
+        vec3 col = mix(shadedPaint, mix(uColor * 1.25, vec3(1.0), 0.45), coreSpec * pulse * 0.65);
 
         float alpha = edgeFade * uOpacity;
         if (alpha < 0.03) discard;
@@ -585,11 +586,11 @@ export function createSunbeamsMaterial() {
       varying vec3 vViewDir;
 
       void main() {
-        float edgeFade = pow(abs(dot(normalize(vNormal), normalize(vViewDir))), 1.4);
-        float verticalFade = smoothstep(0.0, 0.25, vUv.y) * (1.0 - smoothstep(0.55, 1.0, vUv.y));
+        float edgeFade = pow(abs(dot(normalize(vNormal), normalize(vViewDir))), 1.8);
+        float verticalFade = smoothstep(0.0, 0.30, vUv.y) * (1.0 - smoothstep(0.50, 1.0, vUv.y));
         float rayStreak = 0.68 + 0.32 * sin(vUv.x * 25.1327 + uTime * 0.9) * cos(vUv.x * 12.566 - uTime * 0.6);
 
-        float alpha = edgeFade * verticalFade * rayStreak * 0.16;
+        float alpha = edgeFade * verticalFade * rayStreak * 0.045;
         gl_FragColor = vec4(uColor, alpha);
       }
     `,

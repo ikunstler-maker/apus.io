@@ -49,13 +49,13 @@ export class DerpyOctopusAvatar {
     const darker = this.baseColor.clone().multiplyScalar(0.55);
     const lighter = this.baseColor.clone().lerp(new THREE.Color(0xffffff), 0.48);
 
-    // Soft tactile Sunny Claymorphism material (smooth normals, warm studio sheen)
+    // Soft tactile Sunny Claymorphism material (smooth normals, strong 3D directional shading)
     this.skinMat = new THREE.MeshStandardMaterial({
       color: this.baseColor,
       emissive: darker,
-      emissiveIntensity: 0.18,
-      roughness: 0.36,
-      metalness: 0.04,
+      emissiveIntensity: 0.04,
+      roughness: 0.34,
+      metalness: 0.05,
       flatShading: false,
       transparent: true,
       opacity: 1.0
@@ -64,9 +64,9 @@ export class DerpyOctopusAvatar {
     this.underbellyMat = new THREE.MeshStandardMaterial({
       color: lighter,
       emissive: this.baseColor,
-      emissiveIntensity: 0.14,
-      roughness: 0.42,
-      metalness: 0.02,
+      emissiveIntensity: 0.03,
+      roughness: 0.38,
+      metalness: 0.03,
       flatShading: false,
       transparent: true,
       opacity: 1.0
@@ -294,7 +294,7 @@ export class DerpyOctopusAvatar {
     const lengthScales = [1.26, 0.92, 1.34, 0.96, 1.22, 0.88, 1.30, 1.06];
 
     this.tubularSegments = 20;
-    this.tubeRadius = 0.24;
+    this.tubeRadius = 0.28;
     this.radialSegments = 12;
 
     for (let i = 0; i < 8; i++) {
@@ -312,13 +312,13 @@ export class DerpyOctopusAvatar {
       anchor.rotation.y = baseAngle + (rand() - 0.5) * 0.28;
       this.tentacleRoot.add(anchor);
 
-      // 5 CatmullRomCurve3 control points along local +Z
+      // 5 CatmullRomCurve3 control points along local +Z arching in 3D above the water
       const ctrlPts = [
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, -0.08, totalLen * 0.26),
-        new THREE.Vector3((rand() - 0.5) * 0.35, -0.14, totalLen * 0.54),
-        new THREE.Vector3((rand() - 0.5) * 0.55, -0.05, totalLen * 0.80),
-        new THREE.Vector3((rand() - 0.5) * 0.70, 0.12, totalLen)
+        new THREE.Vector3(0, 0.05, 0),
+        new THREE.Vector3(0, 0.18, totalLen * 0.26),
+        new THREE.Vector3((rand() - 0.5) * 0.35, 0.08, totalLen * 0.54),
+        new THREE.Vector3((rand() - 0.5) * 0.55, 0.12, totalLen * 0.80),
+        new THREE.Vector3((rand() - 0.5) * 0.70, 0.28, totalLen)
       ];
 
       const curve = new THREE.CatmullRomCurve3(ctrlPts);
@@ -878,15 +878,17 @@ export class DerpyOctopusAvatar {
       t.slapVel = (t.slapVel + pitchForce * dt) * Math.pow(t.damping, dt * 60);
       t.slapPitch += t.slapVel * dt;
 
-      // Update the 5 CatmullRomCurve3 control points with cascading phase lag
+      // Update the 5 CatmullRomCurve3 control points with cascading phase lag & 3D arch
       const len = t.totalLen;
       for (let k = 1; k < 5; k++) {
         const frac = k / 4;
         const wavePhase = elapsedTime * t.freq - k * 0.72 + t.phase;
         const sideWiggle = Math.sin(wavePhase) * (0.28 + frac * 0.55) + t.swingYaw * frac * 1.25;
-        const vertFlop = Math.cos(wavePhase * 1.1) * (0.14 + frac * 0.26)
-          + t.slapPitch * frac * 0.95
-          + (k === 4 ? 0.16 : -0.10);
+        const archBase = Math.sin(frac * Math.PI) * 0.24 + (k === 4 ? 0.22 : 0.04);
+        const vertFlop = Math.max(
+          -0.02,
+          archBase + Math.cos(wavePhase * 1.1) * (0.14 + frac * 0.24) + t.slapPitch * frac * 0.85
+        );
 
         t.ctrlPts[k].set(
           sideWiggle,

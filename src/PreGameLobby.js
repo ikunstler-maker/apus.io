@@ -160,8 +160,8 @@ export class PreGameLobby {
                 placeholder="Enter nickname..."
                 autocomplete="off"
               />
-              <button type="button" class="dice-name-btn" id="lobby-random-name-btn" title="Random Derpy Name">
-                🎲 Random Derpy Name
+              <button type="button" class="dice-name-btn" id="lobby-random-name-btn" title="Generate Random Derpy Name">
+                🎲 Random
               </button>
             </div>
           </div>
@@ -610,10 +610,17 @@ export class PreGameLobby {
       });
     });
 
-    // Launch Match Button
+    // Launch Match Button (+ Enter key shortcut while lobby is open)
     const launchBtn = document.getElementById('lobby-launch-btn');
     launchBtn.addEventListener('click', () => {
       this.launch();
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (this.isOpen && e.code === 'Enter') {
+        e.preventDefault();
+        this.launch();
+      }
     });
   }
 
